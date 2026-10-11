@@ -7,6 +7,8 @@ import {
   BUSH,
   PIT_BANNER,
   GRAVE_STONE,
+  LILY,
+  PEBBLE,
   TARGET,
   TREE_AUTUMN,
   TREE_AUTUMN_B,
@@ -129,8 +131,8 @@ export function buildWorld(): WorldData {
       const h = hash(x, y);
       const nearWater =
         isWater(x + 1, y) || isWater(x - 1, y) || isWater(x, y + 1) || isWater(x, y - 1);
-      if (nearWater && h % 3 === 0) tiles[i] = 43;
-      else if (h % 7 === 0) tiles[i] = FLOWER_GRASS;
+      if (nearWater && h % 7 === 0) tiles[i] = 43;
+      else if (h % 29 === 0 && hash(x + 1, y) % 2 === 0) tiles[i] = FLOWER_GRASS;
       else if (h % 5 === 0) tiles[i] = GRASS_B;
     }
   }
@@ -139,6 +141,7 @@ export function buildWorld(): WorldData {
   paintVillage(tiles, objects);
   paintPit(objects);
   paintWilds(tiles, objects, path, water);
+  paintDecor(tiles, objects, water);
 
   const spawns = nudgeSpawns(tiles, objects, baseSpawns());
 
@@ -225,7 +228,7 @@ function paintVillage(tiles: Uint8Array, objects: Uint8Array): void {
   objects[idx(46, 46)] = SIGN;
   objects[idx(53, 47)] = CAMPFIRE;
   objects[idx(54, 56)] = CAMPFIRE;
-  objects[idx(48, 46)] = BUSH;
+  objects[idx(49, 45)] = BUSH;
   objects[idx(52, 46)] = TREE_AUTUMN_B;
   objects[idx(54, 48)] = MUSHROOM;
   objects[idx(45, 42)] = TREE;
@@ -241,7 +244,7 @@ function paintVillage(tiles: Uint8Array, objects: Uint8Array): void {
       const i = idx(x, y);
       if (tiles[i] !== GRASS && tiles[i] !== GRASS_B) continue;
       if (objects[i] !== 0) continue;
-      if (hash(x, y) % 4 === 0) tiles[i] = FLOWER_GRASS;
+      if (hash(x, y) % 13 === 0) tiles[i] = FLOWER_GRASS;
     }
   }
 }
@@ -286,6 +289,49 @@ function paintPit(objects: Uint8Array): void {
   objects[idx(82, 55)] = PIT_BANNER;
 }
 
+function paintDecor(tiles: Uint8Array, objects: Uint8Array, water: Set<string>): void {
+  for (let y = 1; y < WORLD_H - 1; y++) {
+    for (let x = 1; x < WORLD_W - 1; x++) {
+      const i = idx(x, y);
+      if (objects[i] !== 0) continue;
+      const h = hash(x, y + 9);
+      if (water.has(key(x, y))) {
+        if (h % 11 === 0) objects[i] = LILY;
+        continue;
+      }
+      const bank =
+        water.has(key(x + 1, y)) || water.has(key(x - 1, y)) || water.has(key(x, y + 1)) || water.has(key(x, y - 1));
+      const ground = tiles[i];
+      if (bank && (ground === GRASS || ground === GRASS_B || ground === 43) && h % 9 === 0) objects[i] = PEBBLE;
+    }
+  }
+}
+
+function treeish(id: number): boolean {
+  return (
+    id === TREE ||
+    id === TREE_TRUNK ||
+    id === TREE_SMALL ||
+    id === TREE_ROUND ||
+    id === TREE_AUTUMN ||
+    id === TREE_AUTUMN_B ||
+    id === PINE_TOP ||
+    id === PINE_TOP_AUTUMN ||
+    id === BUSH ||
+    id === MUSHROOM
+  );
+}
+
+function clearTree(objects: Uint8Array, x: number, y: number): void {
+  if (x < 0 || y < 0 || x >= WORLD_W || y >= WORLD_H) return;
+  if (!treeish(objects[idx(x, y)])) return;
+  objects[idx(x, y)] = 0;
+  if (y > 0) {
+    const above = objects[idx(x, y - 1)];
+    if (above === PINE_TOP || above === PINE_TOP_AUTUMN) objects[idx(x, y - 1)] = 0;
+  }
+}
+
 function paintWilds(tiles: Uint8Array, objects: Uint8Array, path: Set<string>, water: Set<string>): void {
   const spawnAt = new Set(baseSpawns().map((s) => key(s.tx, s.ty)));
   const blocked = (x: number, y: number) => {
@@ -313,35 +359,114 @@ function paintWilds(tiles: Uint8Array, objects: Uint8Array, path: Set<string>, w
         continue;
       }
       if (blocked(x, y) || nearPath(x, y)) continue;
+      // Groves on a loose grid. Some cells stay clearings. Edge trees are shorter.
+      if ((x - 4) % 9 !== 0 || (y - 5) % 8 !== 0) continue;
       const h = hash(x, y);
-      if (h % 17 === 0) {
-        const clump: [number, number][] = [
-          [0, 0],
-          [1, 0],
-          [0, 1],
-          [-1, 0],
-          [1, 1],
-          [-1, 1],
-        ];
-        for (const [dx, dy] of clump) {
+      if (h % 5 === 0) continue;
+      // Radius stays under the grid spacing so a gap remains between groves.
+      const r = 2 + (h % 2);
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx * dx + dy * dy > r * r) continue;
           const nx = x + dx;
           const ny = y + dy;
           if (blocked(nx, ny) || nearPath(nx, ny)) continue;
-          if (dx !== 0 && hash(nx, ny) % 3 === 0) continue;
-          const pick = hash(nx, ny) % 6;
-          objects[idx(nx, ny)] = pick === 0 ? BUSH : pick === 1 ? TREE_AUTUMN_B : TREES[pick % TREES.length];
-          const placed = objects[idx(nx, ny)];
-          // Some pines grow two tiles tall: the top half sits on the tile above.
-          if ((placed === TREE_AUTUMN || placed === TREE_ROUND) && hash(nx + 7, ny) % 2 === 0 && !blocked(nx, ny - 1) && !nearPath(nx, ny - 1)) {
+          const edge = dx * dx + dy * dy >= (r - 1) * (r - 1);
+          const pick = hash(nx, ny);
+          let placed: number;
+          if (edge) placed = pick % 5 === 0 ? BUSH : pick % 2 === 0 ? TREE_AUTUMN_B : TREE_SMALL;
+          else placed = TREES[pick % TREES.length];
+          objects[idx(nx, ny)] = placed;
+          if ((placed === TREE_AUTUMN || placed === TREE_ROUND || placed === TREE) && pick % 2 === 0 && !blocked(nx, ny - 1) && !nearPath(nx, ny - 1) && objects[idx(nx, ny - 1)] === 0) {
             objects[idx(nx, ny - 1)] = placed === TREE_AUTUMN ? PINE_TOP_AUTUMN : PINE_TOP;
           }
         }
-      } else if (h % 29 === 0) {
-        objects[idx(x, y)] = TREE_AUTUMN_B;
-      } else if (h % 11 === 0) {
-        objects[idx(x, y)] = h % 3 === 0 ? MUSHROOM : h % 2 === 0 ? FLOWER_GRASS : BUSH;
+      }
+      // A lane through the grove, so the cluster is a wood and not a wall.
+      const side = h & 16 ? 1 : -1;
+      for (let d = -r; d <= r; d++) {
+        if ((h & 8) === 0) {
+          clearTree(objects, x + d, y);
+          clearTree(objects, x + d, y + side);
+        } else {
+          clearTree(objects, x, y + d);
+          clearTree(objects, x + side, y + d);
+        }
+      }
+      if (h % 6 === 0 && !blocked(x + r + 2, y) && objects[idx(x + r + 2, y)] === 0) {
+        objects[idx(x + r + 2, y)] = MUSHROOM;
+        if (objects[idx(x + r + 3, y)] === 0 && !blocked(x + r + 3, y)) objects[idx(x + r + 3, y)] = MUSHROOM;
       }
     }
+  }
+  carveAccess(tiles, objects);
+}
+
+/** Cut a short trail from each monster camp back to walkable ground. */
+function carveAccess(tiles: Uint8Array, objects: Uint8Array): void {
+  const solid = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= WORLD_W || y >= WORLD_H) return true;
+    return tileIsSolid(objects[idx(x, y)]) || tileIsSolid(tiles[idx(x, y)]);
+  };
+  const flood = () => {
+    const seen = new Uint8Array(WORLD_W * WORLD_H);
+    const q = [idx(SPAWN_TILE.x, SPAWN_TILE.y)];
+    seen[q[0]] = 1;
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h] % WORLD_W;
+      const y = Math.floor(q[h] / WORLD_W);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (solid(nx, ny)) continue;
+        const ni = idx(nx, ny);
+        if (seen[ni]) continue;
+        seen[ni] = 1;
+        q.push(ni);
+      }
+    }
+    return seen;
+  };
+  for (const camp of baseSpawns()) {
+    const seen = flood();
+    const start = idx(camp.tx, camp.ty);
+    if (!solid(camp.tx, camp.ty) && seen[start]) continue;
+    const prev = new Int32Array(WORLD_W * WORLD_H);
+    prev.fill(-1);
+    const q = [start];
+    prev[start] = start;
+    let hit = -1;
+    for (let h = 0; h < q.length && hit < 0; h++) {
+      const x = q[h] % WORLD_W;
+      const y = Math.floor(q[h] / WORLD_W);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= WORLD_W || ny >= WORLD_H) continue;
+        const ni = idx(nx, ny);
+        if (prev[ni] !== -1) continue;
+        if (tileIsSolid(tiles[ni])) continue;
+        const obj = objects[ni];
+        if (obj !== 0 && !treeish(obj)) continue;
+        prev[ni] = q[h];
+        if (seen[ni] && !solid(nx, ny)) {
+          hit = ni;
+          break;
+        }
+        q.push(ni);
+      }
+    }
+    if (hit < 0) continue;
+    let cur = hit;
+    let guard = 0;
+    while (cur !== start && guard++ < 400) {
+      clearTree(objects, cur % WORLD_W, Math.floor(cur / WORLD_W));
+      const nx = (cur % WORLD_W) + 1;
+      clearTree(objects, nx, Math.floor(cur / WORLD_W));
+      cur = prev[cur];
+    }
+    clearTree(objects, camp.tx, camp.ty);
+    clearTree(objects, camp.tx + 1, camp.ty);
   }
 }
 

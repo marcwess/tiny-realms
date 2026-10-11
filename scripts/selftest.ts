@@ -1,10 +1,13 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { TICK_MS } from '../shared/src/constants.ts';
+import { CLASSES, MONSTERS, TICK_MS } from '../shared/src/constants.ts';
 import { InputQueue } from '../shared/src/inputQueue.ts';
 import { sampleInterp } from '../shared/src/interest.ts';
-import { applyMovement, blocked } from '../shared/src/sim.ts';
+import { applyMovement, blocked, lineClear, separateBodies } from '../shared/src/sim.ts';
+import { DOOR, PINE_TOP, SPRITE_PX, TREE, WELL, placeFeet } from '../shared/src/tiles.ts';
+import { decodePng, firstInkRow, frameCell, inkCount } from './png.ts';
+import { TITLE_ROWS, TITLE_Y0, bowImage, renderTitle } from './title-art.ts';
 import { decodeAdd, decodeSnap, encodeAdd, encodeInput, decodeInput, encodeSnap } from '../shared/src/protocol.ts';
 import { playersCanDamage, SPAWN_SUB, zoneAtTile } from '../shared/src/zones.ts';
 import { buildWorld, openSpotNear, reachableFromSpawn, solidAtOf, validateWorld } from '../shared/src/world.ts';
@@ -77,6 +80,24 @@ const step2 = applyMovement(step1.x, step1.y, 3, 24, solid);
 const replay = applyMovement(step1.x, step1.y, 3, 24, solid);
 assert(replay.x === step2.x && replay.y === step2.y, 'replay matches');
 assert(step2.x > start.x, 'moved east');
+{
+  const motion = { vx: 0, vy: 0 };
+  const eased = applyMovement(start.x, start.y, 3, 24, solid, motion);
+  assert(motion.vx > 0 && motion.vx < 24, 'accel is short of full speed');
+  assert(eased.x > start.x && eased.x < step1.x, 'first tick covers less ground');
+  applyMovement(eased.x, eased.y, 3, 24, solid, motion);
+  assert(motion.vx === 24, 'second tick reaches speed');
+  const stop = { vx: 24, vy: 0 };
+  applyMovement(start.x, start.y, 0, 24, solid, stop);
+  assert(stop.vx > 0 && stop.vx < 24, 'decel keeps a little speed');
+  const pair = [
+    { x: start.x, y: start.y },
+    { x: start.x, y: start.y },
+  ];
+  separateBodies(pair, solid, 140);
+  assert(Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y) >= 100, 'stacked bodies separate');
+  assert(lineClear(start.x, start.y, start.x + 160, start.y, solid), 'open grass is a clear shot');
+}
 
 assert(zoneAtTile(50, 50) === 'safe', 'town safe');
 assert(zoneAtTile(78, 50) === 'pvp', 'pit pvp');
@@ -137,5 +158,74 @@ const row = repo.createCharacter({
 repo.saveCharacter({ id: row.id, x: 2222, y: 3333, hp: 40, level: 1, xp: 0 });
 const loaded = repo.findCharacter(row.id);
 assert(loaded?.x === 2222 && loaded.y === 3333 && loaded.hp === 40, 'character save');
+
+{
+  const assets = new URL('../client/public/assets/', import.meta.url);
+  const town = decodePng(readFileSync(new URL('town_packed.png', assets)));
+  const dungeon = decodePng(readFileSync(new URL('tilemap_packed.png', assets)));
+  const bow = decodePng(readFileSync(new URL('bow.png', assets)));
+  const title = decodePng(readFileSync(new URL('title-bg.png', assets)));
+  const gameSrc = readFileSync(new URL('../client/src/game.ts', import.meta.url), 'utf8');
+  assert(gameSrc.includes('setDisplaySize(SPRITE_PX, SPRITE_PX)'), 'sprites use the full 16px cell');
+  assert(!gameSrc.includes('setDisplaySize(15'), 'sprites are not squashed to 15px');
+  assert(SPRITE_PX === 16, 'sprite display is 16');
+
+  const expectInk = (name: string, sheet: 'town' | 'dungeon', frame: number, maxFirstRow: number) => {
+    const cell = frameCell(sheet === 'town' ? town : dungeon, frame);
+    const placed = placeFeet(cell, SPRITE_PX);
+    const srcRow = firstInkRow(cell, 16);
+    const dstRow = firstInkRow(placed, 16);
+    assert(srcRow >= 0 && srcRow <= maxFirstRow, name + ' source top row ' + srcRow);
+    assert(dstRow === srcRow, name + ' placed top row kept (' + dstRow + ' vs ' + srcRow + ')');
+    assert(inkCount(placed, srcRow, srcRow + 1, 16) > 0, name + ' top ink row has pixels');
+  };
+  for (const c of CLASSES) expectInk(c.name, 'dungeon', c.tile, 2);
+  for (const m of MONSTERS) expectInk(m.name, 'dungeon', m.tile, 3);
+  expectInk('tree', 'town', TREE, 0);
+  expectInk('pine top', 'town', PINE_TOP, 0);
+  expectInk('well', 'town', WELL, 0);
+  expectInk('roof', 'town', 52, 1);
+  expectInk('house wall', 'town', 84, 1);
+  expectInk('door', 'town', DOOR, 1);
+  expectInk('sign', 'town', 83, 2);
+  expectInk('sword', 'dungeon', 104, 2);
+  expectInk('staff', 'dungeon', 130, 2);
+  const bowRow = firstInkRow(bow.rgba, bow.w);
+  assert(bow.w === 16 && bow.h === 16 && bowRow === 0, 'bow top row has pixels');
+  const bowPlaced = placeFeet(bow.rgba, SPRITE_PX);
+  assert(firstInkRow(bowPlaced, 16) === 0, 'placed bow keeps its top');
+
+  const top = placeFeet(frameCell(town, PINE_TOP), SPRITE_PX);
+  const trunk = placeFeet(frameCell(town, TREE), SPRITE_PX);
+  const stacked = new Uint8Array(16 * 32 * 4);
+  stacked.set(top.subarray(0, 16 * 16 * 4), 0);
+  stacked.set(trunk.subarray(0, 16 * 16 * 4), 16 * 16 * 4);
+  assert(inkCount(stacked, 0, 8, 16) > 8, 'two-tile pine top half has pixels');
+
+  const door = frameCell(town, DOOR);
+  let clear = 0;
+  for (let y = 4; y < 14; y++) for (let x = 5; x < 11; x++) if (door[(y * 16 + x) * 4 + 3] < 20) clear++;
+  assert(clear > 20, 'door arch is transparent so the dark interior shows');
+
+  const painted = renderTitle();
+  assert(title.w === painted.w && title.h === painted.h, 'title-bg is the live map strip');
+  let water = 0;
+  let mismatch = 0;
+  const riverX = 30 * 16 + 8;
+  const riverY = (48 - TITLE_Y0) * 16 + 8;
+  for (let dy = -4; dy <= 4; dy++) {
+    for (let dx = -4; dx <= 4; dx++) {
+      const i = ((riverY + dy) * title.w + riverX + dx) * 4;
+      if (title.rgba[i] === 0x3d && title.rgba[i + 1] === 0x7f && title.rgba[i + 2] === 0xd0) water++;
+      if (title.rgba[i] !== painted.rgba[i] || title.rgba[i + 1] !== painted.rgba[i + 1]) mismatch++;
+    }
+  }
+  assert(water > 40, 'login river is painted water, not the blue brick sheet');
+  assert(mismatch === 0, 'title-bg matches the current map');
+  assert(TITLE_ROWS === 20 && title.h === 320, 'title strip height');
+  const brick = frameCell(town, 48);
+  const brickRgb = (brick[8 * 16 * 4] << 16) | (brick[8 * 16 * 4 + 1] << 8) | brick[8 * 16 * 4 + 2];
+  assert(brickRgb !== 0x3d7fd0, 'sheet frame 48 is not the painted water');
+}
 
 console.log('selftest ok', { tiles: world.tiles.length, monsters: world.spawns.length });

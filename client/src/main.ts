@@ -44,6 +44,15 @@ function show(which: 'auth' | 'char' | 'world'): void {
   authEl.hidden = which !== 'auth';
   charEl.hidden = which !== 'char';
   hudEl.hidden = which !== 'world';
+  const game = document.getElementById('game');
+  if (game) {
+    if (which === 'world') {
+      game.classList.remove('in');
+      requestAnimationFrame(() => requestAnimationFrame(() => game.classList.add('in')));
+    } else {
+      game.classList.remove('in');
+    }
+  }
   if (which !== 'world') {
     // The in-world menu is a sibling of the HUD, so close it explicitly or it
     // stays over the login form after "Log out" and swallows every tap.
@@ -70,16 +79,25 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
   return fetch(api + path, { ...opts, headers });
 }
 
-function spriteStyle(tile: number): string {
+function applySheet(el: HTMLElement, tile: number, scale: number): void {
   const col = tile % 12;
   const row = Math.floor(tile / 12);
-  const s = 5;
   const base = import.meta.env.BASE_URL;
-  return [
-    `url("${base}assets/tilemap_packed.png")`,
-    `${192 * s}px ${176 * s}px`,
-    `${-col * 16 * s}px ${-row * 16 * s}px`,
-  ].join(' ');
+  el.style.backgroundImage = `url("${base}assets/tilemap_packed.png")`;
+  el.style.backgroundSize = `${192 * scale}px ${176 * scale}px`;
+  el.style.backgroundPosition = `${-col * 16 * scale}px ${-row * 16 * scale}px`;
+  el.style.backgroundRepeat = 'no-repeat';
+}
+
+function applyWeapon(el: HTMLElement, classId: number): void {
+  if (classId === 1) {
+    el.style.backgroundImage = `url("${import.meta.env.BASE_URL}assets/bow.png")`;
+    el.style.backgroundSize = '64px 64px';
+    el.style.backgroundPosition = '0 0';
+    el.style.backgroundRepeat = 'no-repeat';
+    return;
+  }
+  applySheet(el, classId === 2 ? 130 : 104, 4);
 }
 
 function buildCards(): void {
@@ -91,12 +109,10 @@ function buildCards(): void {
     const hp = Math.round((c.hp / 140) * 100);
     const dmg = Math.round((c.dmg / 18) * 100);
     const range = Math.min(100, Math.round(c.range / 22));
-    b.innerHTML = `<div class="sprite"></div><div><strong>${c.name}</strong><p class="role">${c.role}</p><div class="bars"><div class="bar hp"><span style="width:${hp}%"></span><em>HP</em></div><div class="bar dmg"><span style="width:${dmg}%"></span><em>DMG</em></div><div class="bar range"><span style="width:${range}%"></span><em>RANGE</em></div></div></div>`;
+    b.innerHTML = `<div class="sprite"><span class="held"></span></div><div><strong>${c.name}</strong><p class="role">${c.role}</p><div class="bars"><div class="bar hp"><span style="width:${hp}%"></span><em>HP</em></div><div class="bar dmg"><span style="width:${dmg}%"></span><em>DMG</em></div><div class="bar range"><span style="width:${range}%"></span><em>RANGE</em></div></div></div>`;
     const sp = b.querySelector('.sprite') as HTMLElement;
-    const bg = spriteStyle(c.tile).split(' ');
-    sp.style.backgroundImage = bg[0];
-    sp.style.backgroundSize = bg[1] + ' ' + bg[2];
-    sp.style.backgroundPosition = bg[3] + ' ' + bg[4];
+    applySheet(sp, c.tile, 5);
+    applyWeapon(b.querySelector('.held') as HTMLElement, c.id);
     b.onclick = () => {
       selectedClass = c.id;
       buildCards();
@@ -116,12 +132,10 @@ function renderCharacters(list: Character[]): void {
     b.type = 'button';
     b.className = 'hero-card';
     const cls = CLASSES[c.classId];
-    b.innerHTML = `<div class="sprite"></div><div><strong>${c.name}</strong><p class="role">${cls?.name ?? 'Hero'} · Lv ${c.level}</p></div>`;
+    b.innerHTML = `<div class="sprite"><span class="held"></span></div><div><strong>${c.name}</strong><p class="role">${cls?.name ?? 'Adventurer'} · Lv ${c.level}</p></div>`;
     const sp = b.querySelector('.sprite') as HTMLElement;
-    const parts = spriteStyle(cls?.tile ?? 96).split(' ');
-    sp.style.backgroundImage = parts[0];
-    sp.style.backgroundSize = parts[1] + ' ' + parts[2];
-    sp.style.backgroundPosition = parts[3] + ' ' + parts[4];
+    applySheet(sp, cls?.tile ?? 96, 5);
+    applyWeapon(b.querySelector('.held') as HTMLElement, c.classId);
     b.onclick = () => enterWorld(c.id);
     charList.appendChild(b);
   }
@@ -159,6 +173,8 @@ async function auth(path: '/auth/register' | '/auth/login'): Promise<void> {
 function enterWorld(characterId: number): void {
   intentional = false;
   playingId = characterId;
+  const name = document.getElementById('hud-name') as HTMLCanvasElement | null;
+  name?.getContext('2d')?.clearRect(0, 0, name.width, name.height);
   if (socket) {
     socket.onclose = null;
     socket.close();
@@ -297,6 +313,36 @@ function bindHold(el: HTMLElement, down: () => void, up: () => void): void {
   });
 }
 
+const sheetImg = new Image();
+const bowImg = new Image();
+sheetImg.src = import.meta.env.BASE_URL + 'assets/tilemap_packed.png';
+bowImg.src = import.meta.env.BASE_URL + 'assets/bow.png';
+
+function paintPortrait(tile: number, classId: number): void {
+  const portrait = document.getElementById('portrait') as HTMLElement | null;
+  if (!portrait) return;
+  const key = tile + ':' + classId;
+  if (portrait.dataset.tile === key) return;
+  if (!sheetImg.complete || !bowImg.complete || sheetImg.naturalWidth === 0 || bowImg.naturalWidth === 0) return;
+  const c = document.createElement('canvas');
+  c.width = 40;
+  c.height = 40;
+  const g = c.getContext('2d');
+  if (!g) return;
+  g.imageSmoothingEnabled = false;
+  // Full 16px cell, with room above the head so the weapon tip is not cropped.
+  g.drawImage(sheetImg, (tile % 12) * 16, Math.floor(tile / 12) * 16, 16, 16, 2, 8, 32, 32);
+  if (classId === 1) g.drawImage(bowImg, 0, 0, 16, 16, 16, 2, 24, 24);
+  else {
+    const frame = classId === 2 ? 130 : 104;
+    g.drawImage(sheetImg, (frame % 12) * 16, Math.floor(frame / 12) * 16, 16, 16, 14, 0, 26, 26);
+  }
+  portrait.style.backgroundImage = `url("${c.toDataURL()}")`;
+  portrait.style.backgroundSize = '40px 40px';
+  portrait.style.backgroundPosition = 'center';
+  portrait.dataset.tile = key;
+}
+
 function paintText(id: string, text: string, color: string, scale = 2): void {
   const el = document.getElementById(id) as HTMLCanvasElement | null;
   if (!el) return;
@@ -313,7 +359,7 @@ function paintText(id: string, text: string, color: string, scale = 2): void {
 }
 
 bridge.onHud = (s: HudState) => {
-  paintText('hud-name', `${s.name || 'Hero'} Lv ${s.level}`, '#ffd56a', 2);
+  if (s.name) paintText('hud-name', `${s.name} Lv ${s.level}`, '#ffd56a', 2);
   const fill = document.getElementById('hp-fill') as HTMLElement;
   fill.style.width = Math.max(0, Math.min(100, (s.hp / Math.max(1, s.hpMax)) * 100)) + '%';
   const xp = document.getElementById('xp-fill') as HTMLElement;
@@ -322,16 +368,8 @@ bridge.onHud = (s: HudState) => {
   paintText('hud-online', `Online ${s.online}`, '#f4efe4', 1);
   const zoneColor = s.zone === 'pvp' ? '#ffb0a4' : s.zone === 'safe' ? '#d8f0c4' : '#ffe0a8';
   paintText('hud-zone', s.zoneName || 'Wilds', zoneColor, 1);
-  const portrait = document.getElementById('portrait') as HTMLElement;
   const cls = CLASSES.find((c) => c.name === s.className);
-  if (cls && portrait.dataset.tile !== String(cls.tile)) {
-    const scale = 2;
-    const base = import.meta.env.BASE_URL;
-    portrait.style.backgroundImage = `url("${base}assets/tilemap_packed.png")`;
-    portrait.style.backgroundSize = `${192 * scale}px ${176 * scale}px`;
-    portrait.style.backgroundPosition = `${-(cls.tile % 12) * 16 * scale}px ${-Math.floor(cls.tile / 12) * 16 * scale}px`;
-    portrait.dataset.tile = String(cls.tile);
-  }
+  if (cls) paintPortrait(cls.tile, cls.id);
   const icon = document.getElementById('attack-icon') as HTMLImageElement | null;
   if (icon) {
     const file = s.className === 'Archer' ? 'icon_arrow.png' : s.className === 'Mage' ? 'icon_fire.png' : 'icon_sword.png';

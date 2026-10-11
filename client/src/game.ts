@@ -15,7 +15,7 @@ import {
   WORLD_W,
   tileIsSolid,
 } from '../../shared/src/constants.ts';
-import { BRIDGE, BRIDGE_N, BRIDGE_S, CAMPFIRE, DUNGEON, PIT_BANNER, tileFrame, tileIsTall } from '../../shared/src/tiles.ts';
+import { BRIDGE, BRIDGE_N, BRIDGE_S, CAMPFIRE, DOOR, DUNGEON, LILY, PEBBLE, PIT_BANNER, SPRITE_PX, tileFrame, tileIsTall } from '../../shared/src/tiles.ts';
 import { sampleInterp, type InterpSample } from '../../shared/src/interest.ts';
 import {
   decodeAdd,
@@ -91,6 +91,11 @@ interface EntView {
   label?: Phaser.GameObjects.Image;
   bar?: Phaser.GameObjects.Graphics;
   bang?: Phaser.GameObjects.Image;
+  weapon?: Phaser.GameObjects.Image;
+  glow?: Phaser.GameObjects.Image;
+  phase: number;
+  swingAt: number;
+  wasAtk: boolean;
   aggroAt: number;
 }
 
@@ -102,9 +107,9 @@ interface Floater {
 
 interface ChunkDraw {
   ground: Phaser.GameObjects.Image;
-  rows: Phaser.GameObjects.Image[];
+  props: Phaser.GameObjects.Image[];
   fires: Phaser.GameObjects.Sprite[];
-  roofs: Phaser.GameObjects.Image[];
+  shimmers: Phaser.GameObjects.Image[];
 }
 
 const WATER_IDS = new Set([48, 49, 50, 60, 61, 62, 76, 77, 79, 126]);
@@ -133,6 +138,10 @@ function paintWater(g: CanvasRenderingContext2D, id: number, dx: number, dy: num
     g.fillRect(dx, dy, TILE, 3);
     g.fillStyle = bank;
     g.fillRect(dx, dy, TILE, 1);
+    g.fillStyle = '#6fbf4a';
+    g.fillRect(dx + 2, dy + 1, 2, 2);
+    g.fillRect(dx + 8, dy + 2, 3, 1);
+    g.fillRect(dx + 13, dy + 1, 2, 2);
   }
   if (WATER_S.has(id)) {
     g.fillStyle = foam;
@@ -152,6 +161,20 @@ function paintWater(g: CanvasRenderingContext2D, id: number, dx: number, dy: num
     g.fillStyle = bank;
     g.fillRect(dx + TILE - 1, dy, 1, TILE);
   }
+}
+
+function paintShimmer(g: CanvasRenderingContext2D, dx: number, dy: number, phase: number): void {
+  const h = (Math.imul(dx + 3, 2246822519) ^ Math.imul(dy + phase * 17, 3266489917)) >>> 0;
+  g.fillStyle = 'rgba(232, 246, 255, 0.85)';
+  const ox = phase ? 4 : 0;
+  g.fillRect(dx + ((h + ox) % 10) + 2, dy + ((h >>> 4) % 6) + 4, 4, 1);
+  g.fillRect(dx + ((h >>> 8) % 8) + 1, dy + ((h >>> 12) % 5) + 9, 3, 1);
+}
+
+function weaponSpec(classId: number): { tex: string; frame?: number; ox: number; oy: number } {
+  if (classId === 1) return { tex: 'bow', ox: 0.28, oy: 0.55 };
+  if (classId === 2) return { tex: 'tiles', frame: 130, ox: 0.5, oy: 0.84 };
+  return { tex: 'tiles', frame: 104, ox: 0.5, oy: 0.9 };
 }
 
 /** Planks run across the river (east-west road), with rails on the open edges. */
@@ -281,6 +304,7 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('fx-fire', base + 'assets/fx/fire_orange.png', { frameWidth: 32, frameHeight: 32 });
     this.load.spritesheet('fx-smoke', base + 'assets/fx/smoke_brown.png', { frameWidth: 32, frameHeight: 32 });
     this.load.spritesheet('fx-stun', base + 'assets/fx/stun_violet.png', { frameWidth: 32, frameHeight: 32 });
+    this.load.image('bow', base + 'assets/bow.png');
   }
 
   create(): void {
@@ -309,6 +333,18 @@ export class GameScene extends Phaser.Scene {
     });
     this.makeDecorTextures();
     this.makeProjTextures();
+    const glow = document.createElement('canvas');
+    glow.width = 8;
+    glow.height = 8;
+    const gg = glow.getContext('2d');
+    if (gg) {
+      gg.fillStyle = '#ffe14a';
+      gg.fillRect(2, 2, 4, 4);
+      gg.fillStyle = '#fff6c8';
+      gg.fillRect(3, 3, 2, 2);
+    }
+    if (this.textures.exists('glow')) this.textures.remove('glow');
+    this.textures.addCanvas('glow', glow);
     const kb = this.input.keyboard!;
     // No Phaser key capture: it calls preventDefault on window keydown, which
     // swallowed W/A/S/D/F/space/arrows in the login and name fields. The
@@ -546,7 +582,7 @@ export class GameScene extends Phaser.Scene {
       for (const e of snap.ents) {
         if (e.id === this.selfId) {
           this.hp = e.hp;
-          this.predictor.reconcile(snap.ack, e.x, e.y, (tx, ty) => this.solidAt(tx, ty));
+          this.predictor.reconcile(snap.ack, e.x, e.y, e.vx, e.vy, (tx, ty) => this.solidAt(tx, ty));
           this.ensureEnt(e.id, e.kind, e.subtype, e.hp, e.flags, '');
         }
         const view = this.ents.get(e.id);
@@ -640,44 +676,38 @@ export class GameScene extends Phaser.Scene {
     const g = canvas.getContext('2d');
     if (!g) return;
     g.imageSmoothingEnabled = false;
-    const rows = new Map<number, HTMLCanvasElement>();
-    const rowCtx = new Map<number, CanvasRenderingContext2D>();
+    const shimA = document.createElement('canvas');
+    const shimB = document.createElement('canvas');
+    shimA.width = shimB.width = size;
+    shimA.height = shimB.height = size;
+    const ga = shimA.getContext('2d');
+    const gb = shimB.getContext('2d');
+    let waterCount = 0;
     const fires: { x: number; y: number }[] = [];
-    const roofCells: { lx: number; ly: number; id: number }[] = [];
+    const props: { x: number; y: number; id: number; roof: boolean }[] = [];
     for (let i = 0; i < ground.length; i++) {
       const lx = i % CHUNK;
       const ly = Math.floor(i / CHUNK);
       const dx = lx * TILE;
       const dy = ly * TILE;
       this.blitTile(g, ground[i], dx, dy);
+      if (WATER_IDS.has(ground[i]) && ga && gb) {
+        waterCount++;
+        paintShimmer(ga, dx, dy, 0);
+        paintShimmer(gb, dx, dy, 1);
+      }
       const obj = object[i];
       if (!obj) continue;
-      if (ROOF_IDS.has(obj)) {
-        roofCells.push({ lx, ly, id: obj });
+      if (obj === DOOR) {
+        g.fillStyle = '#120e0c';
+        g.fillRect(dx + 3, dy + 2, 10, 14);
+      }
+      if (ROOF_IDS.has(obj) || tileIsTall(obj)) {
         g.fillStyle = 'rgba(20, 30, 16, 0.28)';
         g.beginPath();
-        g.ellipse(dx + 8, dy + 14, 6, 2, 0, 0, Math.PI * 2);
+        g.ellipse(dx + 8, dy + 14, 5, 2, 0, 0, Math.PI * 2);
         g.fill();
-        continue;
-      }
-      if (tileIsTall(obj)) {
-        let rg = rowCtx.get(ly);
-        if (!rg) {
-          const c = document.createElement('canvas');
-          c.width = size;
-          c.height = TILE;
-          const ctx = c.getContext('2d');
-          if (!ctx) continue;
-          ctx.imageSmoothingEnabled = false;
-          rows.set(ly, c);
-          rowCtx.set(ly, ctx);
-          rg = ctx;
-        }
-        g.fillStyle = 'rgba(20, 30, 16, 0.3)';
-        g.beginPath();
-        g.ellipse(dx + 8, dy + 13, 5, 2.2, 0, 0, Math.PI * 2);
-        g.fill();
-        this.blitTile(rg, obj, dx, 0);
+        props.push({ x: cx * size + dx + 8, y: cy * size + dy + TILE, id: obj, roof: ROOF_IDS.has(obj) });
         if (obj === CAMPFIRE) fires.push({ x: cx * size + dx + 8, y: cy * size + dy + 12 });
       } else {
         this.blitTile(g, obj, dx, dy);
@@ -687,22 +717,23 @@ export class GameScene extends Phaser.Scene {
     if (this.textures.exists('chunk-' + key)) this.textures.remove('chunk-' + key);
     this.textures.addCanvas('chunk-' + key, canvas);
     const img = this.add.image(cx * size, cy * size, 'chunk-' + key).setOrigin(0, 0).setDepth(0);
-    const rowImages: Phaser.GameObjects.Image[] = [];
-    for (const [ly, c] of rows) {
-      const name = 'chunkrow-' + key + '-' + ly;
-      if (this.textures.exists(name)) this.textures.remove(name);
-      this.textures.addCanvas(name, c);
-      const bottom = (cy * CHUNK + ly + 1) * TILE;
-      rowImages.push(this.add.image(cx * size, (cy * CHUNK + ly) * TILE, name).setOrigin(0, 0).setDepth(bottom));
+    const propImages: Phaser.GameObjects.Image[] = [];
+    for (const p of props) {
+      const sheet = p.id >= DUNGEON ? 'tiles' : 'town';
+      // Full 16px frame, feet at the bottom of the tile, so the top row is never sliced off.
+      const sprite = this.add.image(p.x, p.y, sheet, tileFrame(p.id)).setOrigin(0.5, 1).setDepth(p.roof ? p.y + 8 : p.y);
+      propImages.push(sprite);
     }
-    const roofImages: Phaser.GameObjects.Image[] = [];
-    for (const r of roofCells) {
-      const ty = cy * CHUNK + r.ly;
-      const img = this.add
-        .image(cx * size + r.lx * TILE, ty * TILE, 'town', tileFrame(r.id))
-        .setOrigin(0, 0)
-        .setDepth((ty + 2) * TILE - 1);
-      roofImages.push(img);
+    const shimmers: Phaser.GameObjects.Image[] = [];
+    if (waterCount > 0 && ga && gb) {
+      for (const [name, src, vis] of [
+        ['shimmer-' + key + '-a', shimA, true],
+        ['shimmer-' + key + '-b', shimB, false],
+      ] as const) {
+        if (this.textures.exists(name)) this.textures.remove(name);
+        this.textures.addCanvas(name, src);
+        shimmers.push(this.add.image(cx * size, cy * size, name).setOrigin(0, 0).setDepth(1).setVisible(vis));
+      }
     }
     const fireSprites: Phaser.GameObjects.Sprite[] = [];
     for (const f of fires) {
@@ -710,7 +741,7 @@ export class GameScene extends Phaser.Scene {
       flame.play({ key: 'campflame-loop', startFrame: (f.x >> 4) % 3 });
       fireSprites.push(flame);
     }
-    this.chunkDraw.set(key, { ground: img, rows: rowImages, fires: fireSprites, roofs: roofImages });
+    this.chunkDraw.set(key, { ground: img, props: propImages, fires: fireSprites, shimmers });
     this.drawMinimap();
   }
 
@@ -732,6 +763,21 @@ export class GameScene extends Phaser.Scene {
       paintBridge(g, id, dx, dy);
       return;
     }
+    if (id === LILY) {
+      g.fillStyle = '#2f7a34';
+      g.fillRect(dx + 4, dy + 8, 8, 2);
+      g.fillRect(dx + 6, dy + 7, 4, 1);
+      g.fillStyle = '#d46ab0';
+      g.fillRect(dx + 7, dy + 6, 2, 2);
+      return;
+    }
+    if (id === PEBBLE) {
+      g.fillStyle = '#6e675f';
+      g.fillRect(dx + 5, dy + 11, 5, 2);
+      g.fillStyle = '#b3aa9e';
+      g.fillRect(dx + 6, dy + 10, 3, 2);
+      return;
+    }
     g.drawImage(sheet, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
   }
 
@@ -749,13 +795,13 @@ export class GameScene extends Phaser.Scene {
     const prev = this.chunkDraw.get(key);
     if (!prev) return;
     prev.ground.destroy();
-    for (const row of prev.rows) {
-      const name = row.texture.key;
-      row.destroy();
+    for (const prop of prev.props) prop.destroy();
+    for (const fire of prev.fires) fire.destroy();
+    for (const shim of prev.shimmers) {
+      const name = shim.texture.key;
+      shim.destroy();
       if (this.textures.exists(name)) this.textures.remove(name);
     }
-    for (const fire of prev.fires) fire.destroy();
-    for (const roof of prev.roofs) roof.destroy();
     this.chunkDraw.delete(key);
   }
 
@@ -794,11 +840,17 @@ export class GameScene extends Phaser.Scene {
       const frame = kind === KIND.PLAYER ? CLASSES[subtype]?.tile ?? 96 : kind === KIND.MONSTER ? MONSTERS[subtype]?.tile ?? 108 : 0;
       const key = kind === KIND.PROJECTILE ? (subtype === 2 ? 'fireball' : subtype === 1 ? 'orb' : 'arrow0') : 'tiles';
       const sprite = (kind === KIND.PROJECTILE ? this.add.sprite(0, 0, key) : this.add.sprite(0, 0, key, frame)).setDepth(2);
-      sprite.setOrigin(0.5, kind === KIND.PROJECTILE ? 0.5 : 0.85);
+      sprite.setOrigin(0.5, kind === KIND.PROJECTILE ? 0.5 : 1);
+      if (kind !== KIND.PROJECTILE) sprite.setDisplaySize(SPRITE_PX, SPRITE_PX);
       if (sprite.texture.key === '__MISSING' || String(sprite.frame?.name) === '__MISSING') this.missing++;
       const shadow = this.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5);
       const hpMax = kind === KIND.PLAYER ? CLASSES[subtype]?.hp ?? 1 : kind === KIND.MONSTER ? MONSTERS[subtype]?.hp ?? 1 : 1;
-      view = { id, kind, subtype, hp, hpMax, flags, name, vx: 0, vy: 0, samples: [], sprite, shadow, aggroAt: 0 };
+      view = { id, kind, subtype, hp, hpMax, flags, name, vx: 0, vy: 0, samples: [], sprite, shadow, phase: (id % 17) * 0.37, swingAt: 0, wasAtk: false, aggroAt: 0 };
+      if (kind === KIND.PLAYER) {
+        const spec = weaponSpec(subtype);
+        view.weapon = (spec.frame === undefined ? this.add.image(0, 0, spec.tex) : this.add.image(0, 0, spec.tex, spec.frame)).setOrigin(spec.ox, spec.oy).setDepth(3);
+        if (subtype === 2) view.glow = this.add.image(0, 0, 'glow').setVisible(false).setDepth(DEPTH_FX);
+      }
       if (kind === KIND.MONSTER || kind === KIND.PLAYER) view.bar = this.add.graphics().setDepth(DEPTH_LABEL);
       this.ents.set(id, view);
     }
@@ -823,6 +875,8 @@ export class GameScene extends Phaser.Scene {
     view.label?.destroy();
     view.bar?.destroy();
     view.bang?.destroy();
+    view.weapon?.destroy();
+    view.glow?.destroy();
     this.ents.delete(id);
   }
 
@@ -894,13 +948,23 @@ export class GameScene extends Phaser.Scene {
     const renderT = est - INTERP_MS;
     const rx = this.predictor.prevX + (this.predictor.x - this.predictor.prevX) * alpha;
     const ry = this.predictor.prevY + (this.predictor.y - this.predictor.prevY) * alpha;
-    const bob = this.stepDir !== 0 && Math.floor(now / 140) % 2 === 0 ? -1 : 0;
+    const shimOn = Math.floor(now / 340) % 2 === 0;
+    for (const chunk of this.chunkDraw.values()) {
+      if (chunk.shimmers.length === 2) {
+        chunk.shimmers[0].setVisible(shimOn);
+        chunk.shimmers[1].setVisible(!shimOn);
+      }
+    }
     for (const view of this.ents.values()) {
       let x: number;
       let y: number;
+      let vx = view.vx;
+      let vy = view.vy;
       if (view.id === this.selfId) {
         x = rx / SUB;
         y = ry / SUB;
+        vx = this.predictor.motion.vx;
+        vy = this.predictor.motion.vy;
         view.sprite.setFlipX(!this.predictor.facingRight);
       } else {
         while (view.samples.length > 8 && view.samples[0].t < renderT - 400) view.samples.shift();
@@ -912,28 +976,73 @@ export class GameScene extends Phaser.Scene {
         if (view.kind === KIND.PROJECTILE) {
           const idx = arrowFrame(view.vx, view.vy);
           if (view.subtype === 0) view.sprite.setTexture('arrow' + idx);
+          // Chest / bow height. The sim still travels at the feet so trees stop the shot.
+          y -= view.subtype === 0 ? 8 : 6;
         }
       }
       const dead = (view.flags & FLAG.Dead) !== 0;
       view.sprite.setVisible(!dead);
       view.shadow.setVisible(!dead && view.kind !== KIND.PROJECTILE);
       view.label?.setVisible(!dead && view.kind === KIND.PLAYER);
-      const moving = view.id === this.selfId ? bob !== 0 : (view.flags & FLAG.Moving) !== 0;
-      const step = Math.floor(now / 140) % 2 === 0;
+      const speed = Math.hypot(vx, vy);
+      const moving = view.kind !== KIND.PROJECTILE && (speed > 3 || (view.flags & FLAG.Moving) !== 0);
+      const idleWave = Math.sin((now / 1200) * Math.PI * 2 + view.phase);
+      const stepWave = Math.sin((now / 160) * Math.PI * 2 + view.phase);
       let oy = 0;
-      if (moving && step) oy = -1;
-      else if (!moving && view.kind === KIND.MONSTER && Math.floor(now / 280) % 2 === 0) oy = -1;
-      const px = Math.round(x);
-      const py = Math.round(y + oy);
-      view.sprite.setPosition(px, py);
-      if (view.kind !== KIND.PROJECTILE) {
-        if (moving) view.sprite.setDisplaySize(step ? 15 : 16, step ? 16 : 15);
-        else view.sprite.setDisplaySize(16, 16);
+      let rot = 0;
+      if (view.kind !== KIND.PROJECTILE && !dead) {
+        if (moving) {
+          const tilt = Math.max(0.35, Math.min(1, speed / 16));
+          rot = stepWave * ((7 * Math.PI) / 180) * tilt;
+          oy = Math.abs(stepWave) > 0.45 ? -1 : 0;
+        } else {
+          oy = Math.round(idleWave * 1.5);
+        }
       }
-      view.sprite.setDepth(py);
-      view.shadow.setPosition(px, Math.round(y) + 2);
-      view.shadow.setDepth(py - 1);
-      if (view.label) view.label.setPosition(px, py - 12);
+      const feet = Math.round(y);
+      const px = Math.round(x);
+      const py = feet + oy;
+      view.sprite.setPosition(px, py);
+      view.sprite.setRotation(rot);
+      if (view.kind !== KIND.PROJECTILE) view.sprite.setDisplaySize(SPRITE_PX, SPRITE_PX);
+      view.sprite.setDepth(feet);
+      view.shadow.setPosition(px, feet + 1);
+      view.shadow.setDepth(feet - 1);
+      view.shadow.setScale(moving ? 1 : 1 + idleWave * 0.05, 1);
+      const attacking = (view.flags & FLAG.Attacking) !== 0;
+      if (attacking && !view.wasAtk) view.swingAt = now;
+      view.wasAtk = attacking;
+      if (view.weapon) {
+        const flip = view.sprite.flipX;
+        const t = attacking ? Math.min(1, (now - view.swingAt) / 210) : 0;
+        let wx = flip ? -4 : 4;
+        let wy = -8;
+        let wrot = rot * 0.5;
+        if (attacking && view.subtype === 0) {
+          // Negative scale mirrors the arc, so the swing stays in facing-right space.
+          wrot = ((-75 + t * 150) * Math.PI) / 180;
+        } else if (attacking && view.subtype === 2) {
+          wrot = ((-95 + Math.sin(t * Math.PI) * 25) * Math.PI) / 180;
+        } else if (view.subtype === 1) {
+          const pull = attacking ? Math.sin(t * Math.PI) : Math.abs(stepWave) * 0.25;
+          wx += flip ? pull * 3 : -pull * 3;
+        } else if (moving) {
+          wrot += stepWave * 0.08;
+        }
+        const spec = weaponSpec(view.subtype);
+        view.weapon
+          .setOrigin(spec.ox, spec.oy)
+          .setScale(flip ? -1 : 1, 1)
+          .setVisible(!dead)
+          .setPosition(px + wx, py + wy)
+          .setRotation(wrot)
+          .setDepth(feet + 0.2);
+        if (view.glow) {
+          const show = attacking && view.subtype === 2;
+          view.glow.setVisible(show && !dead);
+          if (show) view.glow.setPosition(px + (flip ? -11 : 11), py - 18).setAlpha(Math.sin(t * Math.PI));
+        }
+      }
       const aggro = view.kind === KIND.MONSTER && (view.flags & FLAG.Aggro) !== 0 && !dead;
       if (aggro && view.aggroAt === 0) view.aggroAt = now;
       if (!aggro) view.aggroAt = 0;
@@ -943,18 +1052,20 @@ export class GameScene extends Phaser.Scene {
           view.bang = this.add.image(0, 0, 'bang').setDepth(DEPTH_LABEL).setOrigin(0.5, 1);
         }
         const pop = Math.min(1, (now - view.aggroAt) / 140);
-        view.bang.setVisible(true).setPosition(px, py - 18).setScale(0.6 + pop * 0.4);
+        view.bang.setVisible(true).setPosition(px, py - 20).setScale(0.6 + pop * 0.4);
       } else view.bang?.setVisible(false);
+      const showBar = !dead && view.hp < (view.hpMax || 1) && view.kind !== KIND.PROJECTILE;
       if (view.bar) {
         view.bar.clear();
-        const max = view.hpMax || 1;
-        if (!dead && view.hp < max && view.kind !== KIND.PROJECTILE) {
+        if (showBar) {
+          const max = view.hpMax || 1;
           view.bar.fillStyle(0x1a100e, 0.9);
-          view.bar.fillRect(px - 7, py - 16, 14, 3);
+          view.bar.fillRect(px - 7, py - 20, 14, 3);
           view.bar.fillStyle(0xe25a4a, 1);
-          view.bar.fillRect(px - 7, py - 16, Math.max(0, Math.round((14 * view.hp) / max)), 3);
+          view.bar.fillRect(px - 7, py - 20, Math.max(0, Math.round((14 * view.hp) / max)), 3);
         }
       }
+      if (view.label) view.label.setPosition(px, py - (showBar ? 22 : 18));
     }
     const labels = [...this.ents.values()].filter((v) => v.label?.visible);
     labels.sort((a, b) => a.sprite.y - b.sprite.y || a.sprite.x - b.sprite.x);
@@ -963,7 +1074,7 @@ export class GameScene extends Phaser.Scene {
       const lab = view.label!;
       const w = lab.displayWidth || lab.width;
       const h = lab.displayHeight || lab.height;
-      let y = Math.round(view.sprite.y - 14);
+      let y = lab.y;
       const crowded = stacked.some((s) => Math.hypot(s.px - view.sprite.x, s.py - view.sprite.y) < 20);
       if (crowded) y -= h + 1;
       let guard = 0;
@@ -973,8 +1084,8 @@ export class GameScene extends Phaser.Scene {
       ) {
         y -= h + 1;
       }
-      lab.setPosition(Math.round(lab.x), y);
-      stacked.push({ x: lab.x, y, w, h, px: view.sprite.x, py: view.sprite.y });
+      lab.setPosition(Math.round(lab.x), Math.round(y));
+      stacked.push({ x: lab.x, y: lab.y, w, h, px: view.sprite.x, py: view.sprite.y });
     }
     const cam = this.cameras.main;
     const z = cam.zoom || 1;
@@ -1088,6 +1199,9 @@ export class GameScene extends Phaser.Scene {
         subtype: v.subtype,
         sx: v.sprite.x,
         sy: v.sprite.y,
+        rot: v.sprite.rotation,
+        dw: v.sprite.displayWidth,
+        dh: v.sprite.displayHeight,
         vis: v.sprite.visible,
       });
     }
@@ -1096,7 +1210,8 @@ export class GameScene extends Phaser.Scene {
     const median = dts.length ? fpsOf(dts[Math.floor(dts.length / 2)]) : 0;
     const p10 = dts.length ? fpsOf(dts[Math.min(dts.length - 1, Math.floor(dts.length * 0.9))]) : 0;
     const selfEnt = this.ents.get(this.selfId);
-    const frame = selfEnt?.sprite.frame;
+      const frame = selfEnt?.sprite.frame;
+      const weapon = selfEnt?.weapon;
     const tx = Math.floor(this.predictor.x / (TILE * SUB));
     const ty = Math.floor(this.predictor.y / (TILE * SUB));
     const cx = Math.floor(tx / CHUNK);
@@ -1109,6 +1224,13 @@ export class GameScene extends Phaser.Scene {
       y: this.predictor.y / SUB,
       hp: this.hp,
       tileUnder,
+      spriteY: selfEnt?.sprite.y ?? 0,
+      spriteRot: selfEnt?.sprite.rotation ?? 0,
+      shadowY: selfEnt?.shadow.y ?? 0,
+      displayH: selfEnt?.sprite.displayHeight ?? 0,
+      weaponRot: weapon?.rotation ?? 0,
+      weaponX: weapon?.x ?? 0,
+      weaponY: weapon?.y ?? 0,
       tilesetOk: this.tilesetOk,
       missing: this.missing,
       frame: frame ? { name: String(frame.name), x: frame.cutX, y: frame.cutY, w: frame.cutWidth, h: frame.cutHeight, u0: frame.u0, v0: frame.v0, u1: frame.u1, v1: frame.v1 } : null,
