@@ -267,7 +267,7 @@ export function encodeUnchunk(cx: number, cy: number): Uint8Array {
 export function encodeAdd(ents: AddEnt[]): Uint8Array {
   let size = 2;
   const names = ents.map((e) => u8(e.name).subarray(0, 16));
-  for (const n of names) size += 10 + n.length;
+  for (const n of names) size += 11 + n.length;
   const b = new Uint8Array(size);
   const v = new DataView(b.buffer);
   v.setUint8(0, MSG.ADD);
@@ -298,7 +298,7 @@ export function decodeAdd(buf: Uint8Array): AddEnt[] | null {
   const ents: AddEnt[] = [];
   let o = 2;
   for (let i = 0; i < count; i++) {
-    if (o + 10 > buf.length) return null;
+    if (o + 11 > buf.length) return null;
     const id = v.getUint16(o, true);
     o += 2;
     const kind = v.getUint8(o++);

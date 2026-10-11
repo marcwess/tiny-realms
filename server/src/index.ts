@@ -250,6 +250,7 @@ wss.on('connection', (socket: WebSocket) => {
   }
   const conn: Conn = region.addConn(socket);
   socket.on('message', (data) => {
+    try {
     const buf = toBytes(data);
     if (buf.length === 0) return;
     if (buf[0] === MSG.HELLO && !conn.player) {
@@ -287,6 +288,9 @@ wss.on('connection', (socket: WebSocket) => {
       saveOne(conn);
       socket.close(1000, 'logout');
     }
+    } catch (err) {
+      console.error('message', err);
+    }
   });
   socket.on('close', () => {
     saveOne(conn);
@@ -309,7 +313,9 @@ function saveAll(): void {
 
 let nextTick = Date.now() + 50;
 function loop(): void {
-  const stat = region.step();
+  let stat = { chunks: 0, interest: 0, delta: 0, bytes: 0, players: 0, tickMs: 0 };
+  try {
+  stat = region.step();
   tickSamples.push(stat.tickMs);
   if (tickSamples.length > 200) tickSamples.shift();
   if (stat.players > 0) {
@@ -321,6 +327,9 @@ function loop(): void {
     if (deltaSamples.length > 200) deltaSamples.shift();
   }
   if (stat.bytes) bytesWindow.push({ t: Date.now(), n: stat.bytes });
+  } catch (err) {
+    console.error('tick', err);
+  }
   nextTick += 50;
   const delay = Math.max(0, nextTick - Date.now());
   setTimeout(loop, delay);

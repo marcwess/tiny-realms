@@ -65,6 +65,36 @@ Action combat with auto-aim. Knight: short melee arc and a shield bash. Archer: 
 
 `npm run bots -- --n 40` or, in dev, `?bots=40` fills the town with headless clients that walk and attack.
 
+## What was measured
+
+Playwright drove Chromium and WebKit at 390×844, devicePixelRatio 3, through a proxy that delays each WebSocket direction by 50ms. The canvas backing store stayed 390×844 (the camera zoom is the integer scale). Headless Chromium reported fps median 120 and p10 120.
+
+- Three players in town saw each other. Two seconds of east movement gained about 94px with no backward reconciliation snaps. After the stream settled, 173 inputs had been sent and 169 acknowledged.
+- A real touch drag on the left-half joystick moved the archer and showed the knob.
+- Knight, archer, and mage each killed the slime south of the gate. Hits were 18, 11, and 14, with the impact effects and floating numbers.
+- At spawn the client held 9 chunks (columns 0–2). In the Blood Pit it had dropped column 0 and gained column 3 (`3,0`, `3,1`, `3,2`), still 9 chunks.
+- Inside the pit a hit took 18 HP off the other player. A shot fired after stepping back into the wilds did not.
+- Log out and log back in restored the same point: pixel position 1244.3, 806.5 and HP 134.
+
+Forty bot clients on this machine, all piled into town:
+
+| | |
+| --- | --- |
+| tick p50 / p95 / max | 1.63 / 1.94 / 2.38 ms |
+| bandwidth | about 10.6 KB/s per client |
+| chunks per client | 7 |
+| entities in interest | about 46 |
+| entities in each delta | about 33 |
+
+Deltas stay large while everyone is moving inside one interest radius. Idle players outside that radius are not in the snapshot.
+
+## Known issues
+
+- `node:sqlite` logs an experimental warning. The Fly image was not booted here.
+- Snapshot positions are signed 16-bit deci-pixels, and HP is one byte. Both fit M0. A much larger map or health pool needs a wider field.
+- The crypt stairs show a banner only. There is no dungeon instance yet.
+- Level and XP are saved and shown. Nothing awards them yet.
+
 ## Not in M0
 
 Shapes for loot, gear, quests, parties, and crafting live in `shared/src/future.ts` and are not implemented. There is no player trading. Dungeon instances and multi-process region shards are the next split, not this build.

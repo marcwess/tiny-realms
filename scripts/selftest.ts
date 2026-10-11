@@ -5,7 +5,7 @@ import { TICK_MS } from '../shared/src/constants.ts';
 import { InputQueue } from '../shared/src/inputQueue.ts';
 import { sampleInterp } from '../shared/src/interest.ts';
 import { applyMovement } from '../shared/src/sim.ts';
-import { decodeSnap, encodeInput, decodeInput, encodeSnap } from '../shared/src/protocol.ts';
+import { decodeAdd, decodeSnap, encodeAdd, encodeInput, decodeInput, encodeSnap } from '../shared/src/protocol.ts';
 import { playersCanDamage, SPAWN_SUB, zoneAtTile } from '../shared/src/zones.ts';
 import { buildWorld, solidAtOf, validateWorld } from '../shared/src/world.ts';
 import { hashPassword, verifyPassword } from '../server/src/auth.ts';
@@ -76,6 +76,12 @@ const snap = encodeSnap({
 });
 const back = decodeSnap(snap);
 assert(back?.tick === 9 && back.ack === 4 && back.zone === 2 && back.ents[0].x === 1000 && back.ents[0].hp === 80, 'snap codec');
+const added = encodeAdd([
+  { id: 3, kind: 0, subtype: 1, flags: 1, x: 4000, y: 8000, hp: 140, name: 'Mara' },
+  { id: 9, kind: 1, subtype: 0, flags: 0, x: 100, y: 200, hp: 30, name: 'Slime' },
+]);
+const addBack = decodeAdd(added);
+assert(addBack?.length === 2 && addBack[0].name === 'Mara' && addBack[0].hp === 140 && addBack[1].x === 100, 'add codec');
 
 const dir = mkdtempSync(path.join(tmpdir(), 'tiny-'));
 const repo = new SqliteAccountRepository(path.join(dir, 't.sqlite'));
