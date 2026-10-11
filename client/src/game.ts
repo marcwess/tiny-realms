@@ -93,6 +93,12 @@ const DEPTH_LABEL = 4000;
 const DEPTH_FX = 5000;
 const DEPTH_FLOAT = 6000;
 
+function isEditable(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+}
+
 function chooseZoom(w: number, h: number): number {
   return Math.min(w, h) >= 448 ? 4 : 3;
 }
@@ -178,8 +184,15 @@ export class GameScene extends Phaser.Scene {
     anim('fx-stun', 7);
     this.makeProjTextures();
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,SPACE,F,UP,DOWN,LEFT,RIGHT') as GameScene['keys'];
-    kb.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
+    // No Phaser key capture: it calls preventDefault on window keydown, which
+    // swallowed W/A/S/D/F/space/arrows in the login and name fields. The
+    // listener below blocks page scrolling only outside text fields.
+    this.keys = kb.addKeys('W,A,S,D,SPACE,F,UP,DOWN,LEFT,RIGHT', false) as GameScene['keys'];
+    kb.clearCaptures();
+    window.addEventListener('keydown', (e) => {
+      if (isEditable(e.target)) return;
+      if (e.key === ' ' || e.key.startsWith('Arrow')) e.preventDefault();
+    });
     this.cameras.main.setRoundPixels(true);
     this.cameras.main.setBackgroundColor('#141014');
     // Phaser's camera matrix applies zoom to the origin offset. With the
