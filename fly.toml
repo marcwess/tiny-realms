@@ -2,7 +2,7 @@ app = "tiny-realms"
 primary_region = "sjc"
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "server/Dockerfile"
 
 [env]
   DATA_DIR = "/data"

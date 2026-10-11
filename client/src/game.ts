@@ -88,6 +88,11 @@ interface Floater {
   life: number;
 }
 
+// Actors sort by y (10 + y, up to ~1550). Overlays must sit above every actor.
+const DEPTH_LABEL = 4000;
+const DEPTH_FX = 5000;
+const DEPTH_FLOAT = 6000;
+
 function chooseZoom(w: number, h: number): number {
   return Math.min(w, h) >= 448 ? 4 : 3;
 }
@@ -455,7 +460,7 @@ export class GameScene extends Phaser.Scene {
       sprite.setOrigin(0.5, 0.5);
       if (sprite.texture.key === '__MISSING' || String(sprite.frame?.name) === '__MISSING') this.missing++;
       view = { id, kind, subtype, hp, flags, name, vx: 0, vy: 0, samples: [], sprite };
-      if (kind === KIND.MONSTER) view.bar = this.add.graphics().setDepth(4);
+      if (kind === KIND.MONSTER) view.bar = this.add.graphics().setDepth(DEPTH_LABEL);
       this.ents.set(id, view);
     }
     view.kind = kind;
@@ -466,8 +471,8 @@ export class GameScene extends Phaser.Scene {
     if (kind === KIND.PLAYER && view.name && !view.label) {
       const color = subtype === 0 ? '#d5deea' : subtype === 1 ? '#b6e39a' : '#e0c6ff';
       const tex = 'name-' + view.name + '-' + subtype;
-      if (!this.textures.exists(tex)) this.textures.addCanvas(tex, textCanvas(view.name, color, 2));
-      view.label = this.add.image(0, 0, tex).setDepth(5).setOrigin(0.5, 1);
+      if (!this.textures.exists(tex)) this.textures.addCanvas(tex, textCanvas(view.name, color, 1));
+      view.label = this.add.image(0, 0, tex).setDepth(DEPTH_LABEL).setOrigin(0.5, 1);
     }
   }
 
@@ -483,7 +488,7 @@ export class GameScene extends Phaser.Scene {
   private playFx(fx: number, x: number, y: number): void {
     const key =
       fx === FX.ARROW ? 'fx-arrow' : fx === FX.MAGIC ? 'fx-magic' : fx === FX.FIRE ? 'fx-fire' : fx === FX.SMOKE ? 'fx-smoke' : fx === FX.STUN ? 'fx-stun' : 'fx-hit';
-    const s = this.add.sprite(x / SUB, y / SUB, key).setDepth(6).setOrigin(0.5, 0.5);
+    const s = this.add.sprite(x / SUB, y / SUB, key).setDepth(DEPTH_FX).setOrigin(0.5, 0.5);
     s.play(key);
     s.once('animationcomplete', () => s.destroy());
   }
@@ -491,7 +496,7 @@ export class GameScene extends Phaser.Scene {
   private float(x: number, y: number, text: string, color: string): void {
     const tex = 'dmg-' + text + color;
     if (!this.textures.exists(tex)) this.textures.addCanvas(tex, textCanvas(text, color, 2));
-    const img = this.add.image(x / SUB, y / SUB - 12, tex).setDepth(7).setOrigin(0.5, 1);
+    const img = this.add.image(x / SUB, y / SUB - 10, tex).setDepth(DEPTH_FLOAT).setOrigin(0.5, 1);
     this.floaters.push({ img, life: 700 });
   }
 
@@ -574,7 +579,7 @@ export class GameScene extends Phaser.Scene {
       const oy = moving && Math.floor(now / 140) % 2 === 0 ? -1 : 0;
       view.sprite.setPosition(Math.round(x), Math.round(y + oy));
       view.sprite.setDepth(10 + y);
-      if (view.label) view.label.setPosition(Math.round(x), Math.round(y) - 12).setDepth(30);
+      if (view.label) view.label.setPosition(Math.round(x), Math.round(y) - 10);
       if (view.bar) {
         view.bar.clear();
         if (!dead && view.kind === KIND.MONSTER) {
@@ -583,7 +588,6 @@ export class GameScene extends Phaser.Scene {
           view.bar.fillRect(Math.round(x) - 7, Math.round(y) - 12, 14, 3);
           view.bar.fillStyle(0xd4533c, 1);
           view.bar.fillRect(Math.round(x) - 7, Math.round(y) - 12, Math.round(14 * Math.max(0, view.hp) / max), 3);
-          view.bar.setDepth(31);
         }
       }
     }
@@ -655,7 +659,7 @@ export class GameScene extends Phaser.Scene {
       for (let ly = 0; ly < CHUNK; ly += 2) {
         for (let lx = 0; lx < CHUNK; lx += 2) {
           const id = tiles[ly * CHUNK + lx];
-          g.fillStyle = tileIsSolid(id) ? '#9aabbf' : id === 0 || id === 1 ? '#6a3832' : '#e0a56c';
+          g.fillStyle = tileIsSolid(id) ? '#9aabbf' : id === 0 || id === 24 ? '#6a3832' : '#e0a56c';
           g.fillRect(cx * 16 + lx / 2, cy * 16 + ly / 2, 1, 1);
         }
       }
@@ -683,6 +687,9 @@ export class GameScene extends Phaser.Scene {
         x: v.id === this.selfId ? this.predictor.x / SUB : (last ? last.x / SUB : v.sprite.x),
         y: v.id === this.selfId ? this.predictor.y / SUB : (last ? last.y / SUB : v.sprite.y),
         subtype: v.subtype,
+        sx: v.sprite.x,
+        sy: v.sprite.y,
+        vis: v.sprite.visible,
       });
     }
     const dts = [...this.frameDts].sort((a, b) => a - b);
@@ -708,6 +715,7 @@ export class GameScene extends Phaser.Scene {
       frame: frame ? { name: String(frame.name), x: frame.cutX, y: frame.cutY, w: frame.cutWidth, h: frame.cutHeight, u0: frame.u0, v0: frame.v0, u1: frame.u1, v1: frame.v1 } : null,
       source: frame ? { w: frame.source.width, h: frame.source.height } : null,
       zone: this.zone,
+      cam: { x: this.cameras.main.scrollX, y: this.cameras.main.scrollY, z: this.cameras.main.zoom },
       sent: this.predictor.sent,
       acked: this.predictor.acked,
       pending: this.predictor.pending.length,

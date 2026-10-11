@@ -19,11 +19,20 @@ export interface WorldData {
 }
 
 const FLOOR_OUT = 48;
+// Frame ids in tilemap_packed.png (12 columns). Frames 1-3, 13-15 and 25-27 are
+// the outline pieces of a brick block, not a ring wall, so walls use the full
+// brick frame 40 and doors are plain openings.
 const FLOOR_IN = 0;
+const FLOOR_HOUSE = 48;
 const ROAD = 0;
-const DOOR = 68;
-const STAIRS = 63;
-const BANNER = 15;
+const DOOR = 0;
+const WALL = 40;
+const ROCK = 42;
+const RUBBLE = 24;
+const FENCE_H = 77;
+const FENCE_V = 81;
+const STAIRS = 56;
+const BANNER = 29;
 
 function idx(tx: number, ty: number): number {
   return ty * WORLD_W + tx;
@@ -39,30 +48,28 @@ export function buildWorld(): WorldData {
   };
 
   for (let x = 0; x < WORLD_W; x++) {
-    const top = x === 0 ? 2 : x === WORLD_W - 1 ? 4 : 3;
-    const bot = x === 0 ? 26 : x === WORLD_W - 1 ? 28 : 27;
-    paint(x, 0, top);
-    paint(x, WORLD_H - 1, bot);
+    paint(x, 0, WALL);
+    paint(x, WORLD_H - 1, WALL);
   }
   for (let y = 1; y < WORLD_H - 1; y++) {
-    paint(0, y, 14);
-    paint(WORLD_W - 1, y, 16);
+    paint(0, y, WALL);
+    paint(WORLD_W - 1, y, WALL);
   }
 
   // Hand-placed ruins, rocks, and a fenced camp. Scatter fills the rest.
   building(tiles, 22, 14, 12, 9, FLOOR_IN, [{ x: 28, y: 22 }]);
   building(tiles, 96, 14, 14, 10, FLOOR_IN, [{ x: 96, y: 19 }]);
-  for (let x = 100; x <= 112; x++) paint(x, 78, 90);
-  for (let y = 74; y <= 78; y++) {
-    paint(100, y, 90);
-    paint(112, y, 90);
+  for (let x = 100; x <= 112; x++) paint(x, 78, FENCE_H);
+  for (let y = 74; y <= 77; y++) {
+    paint(100, y, FENCE_V);
+    paint(112, y, FENCE_V);
   }
   paint(106, 78, FLOOR_OUT);
 
   const rocks: [number, number][] = [
     [18, 30], [19, 30], [34, 28], [88, 30], [110, 36], [18, 78], [30, 84], [90, 86], [116, 64],
   ];
-  for (const [x, y] of rocks) paint(x, y, 11);
+  for (const [x, y] of rocks) paint(x, y, ROCK);
 
   const spawns: MonsterSpawn[] = [
     { monsterId: 0, tx: 50, ty: 64 },
@@ -99,9 +106,9 @@ export function buildWorld(): WorldData {
     { x: 50, y: 59 },
     { x: 50, y: 42 },
   ]);
-  building(tiles, 44, 44, 12, 5, FLOOR_IN, [{ x: 50, y: 48 }]);
-  building(tiles, 42, 52, 7, 6, FLOOR_IN, [{ x: 48, y: 54 }]);
-  building(tiles, 53, 52, 7, 6, FLOOR_IN, [{ x: 53, y: 54 }]);
+  building(tiles, 44, 44, 12, 5, FLOOR_HOUSE, [{ x: 50, y: 48 }]);
+  building(tiles, 42, 52, 7, 6, FLOOR_HOUSE, [{ x: 48, y: 54 }]);
+  building(tiles, 53, 52, 7, 6, FLOOR_HOUSE, [{ x: 53, y: 54 }]);
   paint(46, 46, 75);
   paint(47, 46, 72);
   paint(56, 46, 82);
@@ -113,13 +120,13 @@ export function buildWorld(): WorldData {
   paint(46, 51, 74);
   paint(54, 51, 72);
 
-  building(tiles, PVP_PIT.x, PVP_PIT.y, PVP_PIT.w, PVP_PIT.h, FLOOR_IN, [{ x: PVP_PIT.x, y: 50 }]);
+  building(tiles, PVP_PIT.x, PVP_PIT.y, PVP_PIT.w, PVP_PIT.h, FLOOR_IN, [{ x: PVP_PIT.x, y: 50 }], RUBBLE);
   paint(PVP_PIT.x, 46, BANNER);
   paint(PVP_PIT.x, 54, BANNER);
   paint(PVP_PIT.x + PVP_PIT.w - 1, 44, BANNER);
   paint(PVP_PIT.x + PVP_PIT.w - 1, 57, BANNER);
 
-  building(tiles, 8, 44, 14, 12, FLOOR_IN, [{ x: 21, y: 50 }]);
+  building(tiles, 8, 44, 14, 12, FLOOR_IN, [{ x: 21, y: 50 }], RUBBLE);
   paint(CRYPT_STAIRS.x, CRYPT_STAIRS.y, STAIRS);
   paint(15, 48, 64);
 
@@ -137,6 +144,7 @@ function building(
   h: number,
   floor: number,
   doors: { x: number; y: number }[],
+  speck = -1,
 ): void {
   for (let ty = y; ty < y + h; ty++) {
     for (let tx = x; tx < x + w; tx++) {
@@ -146,20 +154,11 @@ function building(
       const T = ty === y;
       const B = ty === y + h - 1;
       let tile = floor;
-      if (!L && !R && !T && !B && floor === FLOOR_IN) {
+      if (!L && !R && !T && !B && speck >= 0) {
         const h = (Math.imul(tx, 2246822519) ^ Math.imul(ty, 3266489917)) >>> 0;
-        if (h % 4 === 0) tile = 1;
+        if (h % 7 === 0) tile = speck;
       }
-      if (L || R || T || B) {
-        if (T && L) tile = 2;
-        else if (T && R) tile = 4;
-        else if (B && L) tile = 26;
-        else if (B && R) tile = 28;
-        else if (T) tile = 3;
-        else if (B) tile = 27;
-        else if (L) tile = 14;
-        else tile = 16;
-      }
+      if (L || R || T || B) tile = WALL;
       tiles[idx(tx, ty)] = tile;
     }
   }
@@ -184,7 +183,7 @@ function scatter(tiles: Uint8Array, spawnAt: Set<string>): void {
         [0, 1],
         [0, -1],
       ].every(([dx, dy]) => tiles[idx(x + dx, y + dy)] === FLOOR_OUT || tiles[idx(x + dx, y + dy)] === 49);
-      if (h % 37 === 0 && around && !spawnAt.has(x + ',' + y)) tiles[idx(x, y)] = 11;
+      if (h % 37 === 0 && around && !spawnAt.has(x + ',' + y)) tiles[idx(x, y)] = ROCK;
     }
   }
 }

@@ -115,6 +115,8 @@ label { display: block; margin: 12px 0; color: var(--muted); }
 #top-right { align-items: flex-end; position: relative; }
 #hp-row { display: flex; align-items: center; gap: 6px; }
 #hud canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+/* Text canvases keep their pixel size; a stretched flex item scales the glyphs. */
+#hud-name, #hud-hp { align-self: flex-start; }
 #hud-heart { width: 28px; height: 24px; flex: 0 0 auto; }
 #hp {
   width: min(42vw, 180px);
