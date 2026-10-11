@@ -21,13 +21,11 @@
   </head>
   <body>
     <div id="game"></div>
+    <div id="backdrop"></div>
 
     <section id="screen-auth" class="screen">
-      <div class="sky"></div>
-      <div class="title-far"></div>
-      <div class="title-near"></div>
+      <p class="logo">Tiny Realms</p>
       <div class="panel">
-        <p class="logo">Tiny Realms</p>
         <p class="lede">A small town, a wild river, and a pit that does not forgive.</p>
         <label>Username <input id="auth-user" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" /></label>
         <label>Password <input id="auth-pass" name="password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" /></label>
@@ -36,17 +34,14 @@
           <button id="btn-register" type="button">Create account</button>
           <button id="btn-login" type="button" class="primary">Log in</button>
         </div>
-        <p class="credits">Kenney Tiny Town, Tiny Dungeon, Pixel Adventure, Mobile Controls (CC0)</p>
-        <p class="credits">Pixel effects: Super Pixel Effects Gigapack - Will Tice / unTied Games</p>
       </div>
+      <button id="link-credits" type="button" class="text-link">Credits</button>
     </section>
 
     <section id="screen-char" class="screen" hidden>
+      <button id="btn-account-out" type="button" class="text-link corner-link">Log out</button>
       <div class="panel wide">
-        <div class="row spread">
         <h1 id="char-title">Your hero</h1>
-          <button id="btn-account-out" type="button" class="ghost">Log out</button>
-        </div>
         <div id="char-list"></div>
         <h2>Create a character</h2>
         <label>Name <input id="char-name" name="character-name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" /></label>
@@ -62,26 +57,19 @@
           <div id="portrait"></div>
           <div id="vital-text">
             <canvas id="hud-name" width="8" height="8"></canvas>
-            <div id="hp-row">
-              <canvas id="hud-heart" width="14" height="12"></canvas>
-              <div id="hp"><div id="hp-fill"></div></div>
-            </div>
+            <div id="hp"><div id="hp-fill"></div><canvas id="hud-hp" width="8" height="8"></canvas></div>
             <div id="xp"><div id="xp-fill"></div></div>
-            <canvas id="hud-hp" width="8" height="8"></canvas>
           </div>
         </div>
         <div id="top-right">
-          <div id="map-frame">
-            <canvas id="minimap" width="64" height="48"></canvas>
+          <div id="map-col">
+            <div id="map-frame">
+              <canvas id="minimap" width="64" height="48"></canvas>
+            </div>
+            <div id="zone-banner"><canvas id="hud-zone" width="8" height="8"></canvas></div>
+            <canvas id="hud-online" width="8" height="8"></canvas>
           </div>
-          <canvas id="hud-zone" width="8" height="8"></canvas>
-          <canvas id="hud-online" width="8" height="8"></canvas>
           <button id="btn-menu" type="button" aria-label="Menu" aria-expanded="false"></button>
-          <div id="menu-pop" hidden>
-            <button id="btn-logout" type="button">Log out</button>
-            <button id="btn-credits" type="button">Credits</button>
-            <button id="btn-settings" type="button">Settings</button>
-          </div>
         </div>
       </div>
       <div id="banner" hidden><canvas id="banner-text"></canvas></div>
@@ -97,6 +85,15 @@
         <button id="btn-attack" type="button" aria-label="Attack">
           <img id="attack-icon" alt="" src="assets/ui/icon_sword.png" />
         </button>
+      </div>
+    </div>
+    <div id="menu-pop" hidden>
+      <div class="panel menu-card">
+        <button id="menu-close" type="button" class="close-x" aria-label="Close">X</button>
+        <p class="menu-title">Menu</p>
+        <button id="btn-logout" type="button">Log out</button>
+        <button id="btn-credits" type="button">Credits</button>
+        <button id="btn-settings" type="button">Settings</button>
       </div>
     </div>
     <div id="modal" hidden>

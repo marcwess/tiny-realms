@@ -846,11 +846,24 @@ export class GameScene extends Phaser.Scene {
       }
     }
     const labels = [...this.ents.values()].filter((v) => v.label?.visible);
-    labels.sort((a, b) => a.sprite.y - b.sprite.y);
-    for (let i = 1; i < labels.length; i++) {
-      const prev = labels[i - 1].label!;
-      const cur = labels[i].label!;
-      if (Math.abs(cur.x - prev.x) < 28 && Math.abs(cur.y - prev.y) < 8) cur.y = prev.y - 8;
+    labels.sort((a, b) => a.sprite.y - b.sprite.y || a.sprite.x - b.sprite.x);
+    const stacked: { x: number; y: number; w: number; h: number; px: number; py: number }[] = [];
+    for (const view of labels) {
+      const lab = view.label!;
+      const w = lab.displayWidth || lab.width;
+      const h = lab.displayHeight || lab.height;
+      let y = Math.round(view.sprite.y - 14);
+      const crowded = stacked.some((s) => Math.hypot(s.px - view.sprite.x, s.py - view.sprite.y) < 20);
+      if (crowded) y -= h + 1;
+      let guard = 0;
+      while (
+        guard++ < 5 &&
+        stacked.some((s) => Math.abs(s.x - lab.x) < (s.w + w) / 2 + 1 && Math.abs(s.y - y) < (s.h + h) / 2)
+      ) {
+        y -= h + 1;
+      }
+      lab.setPosition(Math.round(lab.x), y);
+      stacked.push({ x: lab.x, y, w, h, px: view.sprite.x, py: view.sprite.y });
     }
     const cam = this.cameras.main;
     const z = cam.zoom || 1;

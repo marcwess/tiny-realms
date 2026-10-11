@@ -44,6 +44,8 @@ function show(which: 'auth' | 'char' | 'world'): void {
   authEl.hidden = which !== 'auth';
   charEl.hidden = which !== 'char';
   hudEl.hidden = which !== 'world';
+  const backdrop = document.getElementById('backdrop');
+  if (backdrop) backdrop.hidden = which === 'world';
   const tiny = (window as unknown as { __TINY__?: { screen?: string } }).__TINY__;
   if (tiny) tiny.screen = which;
   else (window as unknown as { __TINY__: { screen: string } }).__TINY__ = { screen: which };
@@ -79,7 +81,10 @@ function buildCards(): void {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'class-card' + (c.id === selectedClass ? ' selected' : '');
-    b.innerHTML = `<div class="sprite"></div><div><strong>${c.name}</strong><p class="role">${c.role}</p><div class="bars"><div class="bar hp"><span style="width:${Math.round((c.hp / 140) * 100)}%"></span></div><div class="bar dmg"><span style="width:${Math.round((c.dmg / 18) * 100)}%"></span></div><div class="bar range"><span style="width:${Math.min(100, Math.round(c.range / 22))}%"></span></div></div></div>`;
+    const hp = Math.round((c.hp / 140) * 100);
+    const dmg = Math.round((c.dmg / 18) * 100);
+    const range = Math.min(100, Math.round(c.range / 22));
+    b.innerHTML = `<div class="sprite"></div><div><strong>${c.name}</strong><p class="role">${c.role}</p><div class="bars"><div class="bar hp"><span style="width:${hp}%"></span><em>HP</em></div><div class="bar dmg"><span style="width:${dmg}%"></span><em>DMG</em></div><div class="bar range"><span style="width:${range}%"></span><em>RANGE</em></div></div></div>`;
     const sp = b.querySelector('.sprite') as HTMLElement;
     const bg = spriteStyle(c.tile).split(' ');
     sp.style.backgroundImage = bg[0];
@@ -297,37 +302,16 @@ function paintText(id: string, text: string, color: string, scale = 2): void {
   g.drawImage(src, 0, 0);
 }
 
-function drawHeart(): void {
-  const c = document.getElementById('hud-heart') as HTMLCanvasElement | null;
-  if (!c) return;
-  const s = 2;
-  const rows = ['0110110', '1111111', '1111111', '0111110', '0011100', '0001000'];
-  c.width = 7 * s;
-  c.height = rows.length * s;
-  const g = c.getContext('2d');
-  if (!g) return;
-  g.imageSmoothingEnabled = false;
-  rows.forEach((row, y) => {
-    [...row].forEach((bit, x) => {
-      if (bit !== '1') return;
-      g.fillStyle = '#3a100c';
-      g.fillRect(x * s + 1, y * s + 1, s, s);
-      g.fillStyle = '#e25a4a';
-      g.fillRect(x * s, y * s, s, s);
-    });
-  });
-}
-
 bridge.onHud = (s: HudState) => {
-  paintText('hud-name', `${s.name || 'Hero'}  Lv ${s.level}`, '#ffd56a', 2);
+  paintText('hud-name', `${s.name || 'Hero'} Lv ${s.level}`, '#ffd56a', 2);
   const fill = document.getElementById('hp-fill') as HTMLElement;
   fill.style.width = Math.max(0, Math.min(100, (s.hp / Math.max(1, s.hpMax)) * 100)) + '%';
   const xp = document.getElementById('xp-fill') as HTMLElement;
   xp.style.width = Math.max(4, Math.min(100, s.xp % 100)) + '%';
-  paintText('hud-hp', `${s.hp} / ${s.hpMax}`, '#f4efe4', 2);
+  paintText('hud-hp', `${s.hp}/${s.hpMax}`, '#fff6e8', 1);
   paintText('hud-online', `Online ${s.online}`, '#f4efe4', 1);
   const zoneColor = s.zone === 'pvp' ? '#ffb0a4' : s.zone === 'safe' ? '#d8f0c4' : '#ffe0a8';
-  paintText('hud-zone', s.zoneName || 'Wilds', zoneColor, 2);
+  paintText('hud-zone', s.zoneName || 'Wilds', zoneColor, 1);
   const portrait = document.getElementById('portrait') as HTMLElement;
   const cls = CLASSES.find((c) => c.name === s.className);
   if (cls && portrait.dataset.tile !== String(cls.tile)) {
@@ -359,6 +343,10 @@ bridge.onHud = (s: HudState) => {
 };
 
 async function boot(): Promise<void> {
+  await Promise.all([
+    document.fonts.load('8px "Kenney Mini"'),
+    document.fonts.load('64px "Kenney Square"'),
+  ]).catch(() => undefined);
   const params = new URLSearchParams(location.search);
   const override = params.get('server');
   if (!override) {
@@ -386,21 +374,30 @@ async function boot(): Promise<void> {
   };
   document.getElementById('btn-account-out')!.onclick = () => void logout();
   document.getElementById('btn-logout')!.onclick = () => void logout();
-  drawHeart();
   const menuBtn = document.getElementById('btn-menu')!;
   const menuPop = document.getElementById('menu-pop')!;
+  const closeMenu = () => {
+    menuPop.hidden = true;
+    menuBtn.setAttribute('aria-expanded', 'false');
+  };
   menuBtn.onclick = () => {
     const open = menuPop.hidden;
     menuPop.hidden = !open;
     menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
+  menuPop.addEventListener('click', (e) => {
+    if (e.target === menuPop) closeMenu();
+  });
+  document.getElementById('menu-close')!.onclick = () => closeMenu();
   const modal = document.getElementById('modal')!;
   const modalBody = document.getElementById('modal-body')!;
   const openModal = (text: string) => {
     modalBody.textContent = text;
     modal.hidden = false;
-    menuPop.hidden = true;
+    closeMenu();
   };
+  document.getElementById('link-credits')!.onclick = () =>
+    openModal('Kenney Tiny Town, Tiny Dungeon, Pixel Adventure UI, Mobile Controls, and Kenney fonts (CC0). Pixel effects: Super Pixel Effects Gigapack - Will Tice / unTied Games.');
   document.getElementById('btn-credits')!.onclick = () =>
     openModal('Kenney Tiny Town, Tiny Dungeon, Pixel Adventure UI, Mobile Controls, and Kenney fonts (CC0). Pixel effects: Super Pixel Effects Gigapack - Will Tice / unTied Games.');
   document.getElementById('btn-settings')!.onclick = () =>
