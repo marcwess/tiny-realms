@@ -30,7 +30,7 @@ import {
   type EvMsg,
   type SnapEnt,
 } from '../../shared/src/protocol.ts';
-import { applyMovement, blocked, decayKnock, dirFromVector, dist2, type SolidAt } from '../../shared/src/sim.ts';
+import { applyMovement, blocked, decayKnock, dirFromVector, dist2, lineClear, separateBodies, type Motion, type SolidAt } from '../../shared/src/sim.ts';
 import { buildWorld, chunkSlice, openSpotNear, reachableFromSpawn, solidAtOf, type WorldData } from '../../shared/src/world.ts';
 import {
   ENTRANCES,
@@ -76,6 +76,8 @@ interface Body {
   kby: number;
   attacking: number;
   moving: boolean;
+  mvx: number;
+  mvy: number;
   name: string;
 }
 
@@ -196,6 +198,8 @@ export class RegionSim {
         kby: 0,
         attacking: 0,
         moving: false,
+        mvx: 0,
+        mvy: 0,
         attackCd: 0,
         aiDir: 0,
         aiTimer: 0,
@@ -307,6 +311,8 @@ export class RegionSim {
       kby: 0,
       attacking: 0,
       moving: false,
+      mvx: 0,
+      mvy: 0,
       attackCd: 0,
       skillCd: 0,
       inputs: new InputQueue(),
@@ -344,6 +350,10 @@ export class RegionSim {
     for (const p of this.players.values()) this.updatePlayer(p);
     this.updateProjectiles();
     for (const m of this.monsters) this.updateMonster(m);
+    separateBodies(
+      [...this.players.values(), ...this.monsters],
+      this.solidAt,
+    );
     let chunks = 0;
     let interest = 0;
     let delta = 0;
@@ -395,9 +405,17 @@ export class RegionSim {
     const budget = queued > 6 ? 2 : 1;
     const inputs = p.inputs.consume(budget);
     const def = CLASSES[p.classId];
+    const motion: Motion = { vx: p.mvx, vy: p.mvy };
+    if (inputs.length === 0) {
+      // No input this tick (jitter or a stalled client). Let the reported velocity
+      // fall off so remotes stop the walk cycle, but do not move: the client never
+      // simulated this tick, so a displacement here would show up as a correction.
+      motion.vx = Math.trunc(motion.vx / 4);
+      motion.vy = Math.trunc(motion.vy / 4);
+    }
     for (const input of inputs) {
       if (p.dead) continue;
-      const mv = applyMovement(p.x, p.y, input.dir, def.speed, this.solidAt);
+      const mv = applyMovement(p.x, p.y, input.dir, def.speed, this.solidAt, motion);
       p.x = mv.x;
       p.y = mv.y;
       if (mv.facingRight !== null) p.facingRight = mv.facingRight;
@@ -405,6 +423,8 @@ export class RegionSim {
       if (input.buttons & BTN.Attack) this.tryAttack(p, def, false);
       if (input.buttons & BTN.Skill) this.tryAttack(p, def, true);
     }
+    p.mvx = motion.vx;
+    p.mvy = motion.vy;
     if (!p.dead) {
       const door = entranceAt(tileOf(p.x), tileOf(p.y));
       if (door && p.lastEntrance !== door.dungeonId) {
@@ -424,7 +444,7 @@ export class RegionSim {
     }
     p.attacking = 4;
     const range = skill ? def.skillRange : def.range;
-    const target = this.nearestHostile(p, range);
+    const target = this.aimTarget(p, range);
     if (target) {
       p.facingRight = target.x >= p.x;
     }
@@ -535,15 +555,15 @@ export class RegionSim {
     return out;
   }
 
-  private nearestHostile(p: Player, range: number): HurtTarget | null {
+  private aimTarget(p: Player, range: number): HurtTarget | null {
     let best: HurtTarget | null = null;
     let bestD = range * range;
     for (const t of this.hostilesOf(p)) {
       const d = dist2(p.x, p.y, t.x, t.y);
-      if (d <= bestD) {
-        best = t;
-        bestD = d;
-      }
+      if (d > bestD) continue;
+      if (!lineClear(p.x, p.y, t.x, t.y, this.solidAt)) continue;
+      best = t;
+      bestD = d;
     }
     return best;
   }
@@ -590,13 +610,15 @@ export class RegionSim {
       this.stepActor(m, dirFromVector(m.homeX - m.x, m.homeY - m.y), m.def.speed, true);
     } else {
       if (m.aiTimer <= 0) {
-        m.aiDir = 1 + (m.rng() % 8);
+        // About a third of the time a wanderer stands still for a moment, so it
+        // reads as idle (and bobs) instead of pacing forever.
+        m.aiDir = m.rng() % 3 === 0 ? 0 : 1 + (m.rng() % 8);
         m.aiTimer = 8 + (m.rng() % 24);
       }
       m.aiTimer--;
       const before = m.x + m.y;
       this.stepActor(m, m.aiDir, m.def.speed, true);
-      if (m.x + m.y === before) m.aiTimer = 0;
+      if (m.aiDir !== 0 && m.x + m.y === before) m.aiTimer = 0;
     }
   }
 
@@ -615,11 +637,14 @@ export class RegionSim {
   }
 
   private stepActor(body: Player | Monster, dir: number, speed: number, avoidSafe: boolean): void {
+    const motion: Motion = { vx: body.mvx, vy: body.mvy };
     const mv = applyMovement(body.x, body.y, dir, speed, (tx, ty) => {
       if (this.solidAt(tx, ty)) return true;
       if (avoidSafe && zoneAt(tx * TILE_SUB + 80, ty * TILE_SUB + 80) === 'safe') return true;
       return false;
-    });
+    }, motion);
+    body.mvx = motion.vx;
+    body.mvy = motion.vy;
     body.x = mv.x;
     body.y = mv.y;
     if (mv.facingRight !== null) body.facingRight = mv.facingRight;
@@ -715,8 +740,8 @@ export class RegionSim {
     const delta: SnapEnt[] = [];
     for (const e of visible.values()) {
       const flags = flagsOf(e);
-      const vx = e.kind === 2 ? (e as Proj).vx : 0;
-      const vy = e.kind === 2 ? (e as Proj).vy : 0;
+      const vx = e.kind === 2 ? (e as Proj).vx : (e as Player).mvx ?? 0;
+      const vy = e.kind === 2 ? (e as Proj).vy : (e as Player).mvy ?? 0;
       const prev = conn.known.get(e.id);
       if (!prev) {
         added.push({

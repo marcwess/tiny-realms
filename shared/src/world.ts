@@ -7,6 +7,8 @@ import {
   BUSH,
   PIT_BANNER,
   GRAVE_STONE,
+  LILY,
+  PEBBLE,
   TARGET,
   TREE_AUTUMN,
   TREE_AUTUMN_B,
@@ -93,7 +95,7 @@ export function buildWorld(): WorldData {
     for (let x = PVP_PIT.x + 1; x < PVP_PIT.x + PVP_PIT.w - 1; x++) path.add(key(x, y));
   }
 
-  for (let y = 8; y <= 88; y++) {
+  for (let y = 0; y < WORLD_H; y++) {
     for (let x = 28; x <= 32; x++) {
       if (path.has(key(x, y))) continue;
       water.add(key(x, y));
@@ -103,14 +105,16 @@ export function buildWorld(): WorldData {
     for (let x = 90; x <= 102; x++) {
       const dx = (x - 96) / 6;
       const dy = (y - 27) / 5;
-      if (dx * dx + dy * dy > 1) continue;
+      // Slightly inside the unit circle so no single-tile nub sticks out at the poles.
+      if (dx * dx + dy * dy > 0.92) continue;
       if (path.has(key(x, y))) continue;
       water.add(key(x, y));
     }
   }
 
   const isPath = (x: number, y: number) => path.has(key(x, y));
-  const isWater = (x: number, y: number) => water.has(key(x, y));
+  // Off-map rows count as water so the river runs out of the frame instead of ending in a bank.
+  const isWater = (x: number, y: number) => water.has(key(x, Math.max(0, Math.min(WORLD_H - 1, y))));
 
   for (let y = 0; y < WORLD_H; y++) {
     for (let x = 0; x < WORLD_W; x++) {
@@ -118,7 +122,7 @@ export function buildWorld(): WorldData {
         tiles[idx(x, y)] = waterTile(x, y, isWater);
         continue;
       }
-      if (isPath(x, y)) tiles[idx(x, y)] = x >= 28 && x <= 32 && y >= 8 && y <= 88 ? bridgeTile(x, y, isPath) : pathTile(x, y, isPath);
+      if (isPath(x, y)) tiles[idx(x, y)] = x >= 28 && x <= 32 ? bridgeTile(x, y, isPath) : pathTile(x, y, isPath);
     }
   }
 
@@ -129,8 +133,8 @@ export function buildWorld(): WorldData {
       const h = hash(x, y);
       const nearWater =
         isWater(x + 1, y) || isWater(x - 1, y) || isWater(x, y + 1) || isWater(x, y - 1);
-      if (nearWater && h % 3 === 0) tiles[i] = 43;
-      else if (h % 7 === 0) tiles[i] = FLOWER_GRASS;
+      if (nearWater && h % 7 === 0) tiles[i] = 43;
+      else if (h % 29 === 0 && hash(x + 1, y) % 2 === 0) tiles[i] = FLOWER_GRASS;
       else if (h % 5 === 0) tiles[i] = GRASS_B;
     }
   }
@@ -139,6 +143,7 @@ export function buildWorld(): WorldData {
   paintVillage(tiles, objects);
   paintPit(objects);
   paintWilds(tiles, objects, path, water);
+  paintDecor(tiles, objects, water);
 
   const spawns = nudgeSpawns(tiles, objects, baseSpawns());
 
@@ -225,7 +230,7 @@ function paintVillage(tiles: Uint8Array, objects: Uint8Array): void {
   objects[idx(46, 46)] = SIGN;
   objects[idx(53, 47)] = CAMPFIRE;
   objects[idx(54, 56)] = CAMPFIRE;
-  objects[idx(48, 46)] = BUSH;
+  objects[idx(49, 45)] = BUSH;
   objects[idx(52, 46)] = TREE_AUTUMN_B;
   objects[idx(54, 48)] = MUSHROOM;
   objects[idx(45, 42)] = TREE;
@@ -234,14 +239,16 @@ function paintVillage(tiles: Uint8Array, objects: Uint8Array): void {
   objects[idx(58, 57)] = TREE;
   stall(objects, 46, 57);
   objects[idx(47, 58)] = MUSHROOM;
+  // A short rail by the campfire (a lone rail piece over a post read as a broken sign).
+  objects[idx(54, 46)] = FENCE_L;
   objects[idx(55, 46)] = FENCE;
-  objects[idx(55, 47)] = POST;
+  objects[idx(56, 46)] = FENCE_R;
   for (let y = 42; y <= 58; y++) {
     for (let x = 41; x <= 59; x++) {
       const i = idx(x, y);
       if (tiles[i] !== GRASS && tiles[i] !== GRASS_B) continue;
       if (objects[i] !== 0) continue;
-      if (hash(x, y) % 4 === 0) tiles[i] = FLOWER_GRASS;
+      if (hash(x, y) % 13 === 0) tiles[i] = FLOWER_GRASS;
     }
   }
 }
@@ -286,60 +293,225 @@ function paintPit(objects: Uint8Array): void {
   objects[idx(82, 55)] = PIT_BANNER;
 }
 
+function paintDecor(tiles: Uint8Array, objects: Uint8Array, water: Set<string>): void {
+  for (let y = 1; y < WORLD_H - 1; y++) {
+    for (let x = 1; x < WORLD_W - 1; x++) {
+      const i = idx(x, y);
+      if (objects[i] !== 0) continue;
+      const h = hash(x, y + 9);
+      if (water.has(key(x, y))) {
+        if (h % 11 === 0) objects[i] = LILY;
+        continue;
+      }
+      const bank =
+        water.has(key(x + 1, y)) || water.has(key(x - 1, y)) || water.has(key(x, y + 1)) || water.has(key(x, y - 1));
+      const ground = tiles[i];
+      if (bank && (ground === GRASS || ground === GRASS_B || ground === 43) && h % 9 === 0) objects[i] = PEBBLE;
+    }
+  }
+}
+
+/** Smooth value noise in [0, 1). Lattice spacing is `scale` tiles. */
+function valueNoise(x: number, y: number, scale: number, seed: number): number {
+  const fx = x / scale;
+  const fy = y / scale;
+  const x0 = Math.floor(fx);
+  const y0 = Math.floor(fy);
+  const sx = fx - x0;
+  const sy = fy - y0;
+  const u = sx * sx * (3 - 2 * sx);
+  const v = sy * sy * (3 - 2 * sy);
+  const at = (ix: number, iy: number) => (hash(ix * 7 + seed, iy * 13 - seed) % 1000) / 1000;
+  const a = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * u;
+  const b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * u;
+  return a + (b - a) * v;
+}
+
+/**
+ * Tiny Town's 3x3 forest block: 7 is the top row of crowns, 19 the dense middle,
+ * 31 the trunk row, 18 / 20 the left / right sides. The block corners (6, 8, 30, 32)
+ * stick out past the clump, so corner cells are left as open grass instead.
+ */
+const FOREST_GREEN = { top: 7, mid: 19, bottom: 31, left: 18, right: 20 };
+const FOREST_AUTUMN = { top: 10, mid: 22, bottom: 34, left: 21, right: 23 };
+/** Wood where the noise is above this; open lanes follow the 0.5 contour of a second field. */
+const WOOD_T = 0.48;
+const LANE_W = 0.07;
+
 function paintWilds(tiles: Uint8Array, objects: Uint8Array, path: Set<string>, water: Set<string>): void {
-  const spawnAt = new Set(baseSpawns().map((s) => key(s.tx, s.ty)));
-  const blocked = (x: number, y: number) => {
-    if (x < 1 || y < 1 || x >= WORLD_W - 1 || y >= WORLD_H - 1) return true;
+  const spawnAt = baseSpawns();
+  const nearCamp = (x: number, y: number, r: number) => spawnAt.some((s) => Math.abs(s.tx - x) <= r && Math.abs(s.ty - y) <= r);
+  const reserved = (x: number, y: number) => {
     if (path.has(key(x, y)) || water.has(key(x, y))) return true;
     if (objects[idx(x, y)] !== 0) return true;
     if (tiles[idx(x, y)] >= DUNGEON) return true;
-    if (x >= TOWN.x && x < TOWN.x + TOWN.w && y >= TOWN.y && y < TOWN.y + TOWN.h) return true;
-    if (x >= PVP_PIT.x && x < PVP_PIT.x + PVP_PIT.w && y >= PVP_PIT.y && y < PVP_PIT.y + PVP_PIT.h) return true;
-    if (spawnAt.has(key(x, y))) return true;
+    if (x >= TOWN.x - 1 && x < TOWN.x + TOWN.w + 1 && y >= TOWN.y - 1 && y < TOWN.y + TOWN.h + 1) return true;
+    if (x >= PVP_PIT.x - 1 && x < PVP_PIT.x + PVP_PIT.w + 1 && y >= PVP_PIT.y - 1 && y < PVP_PIT.y + PVP_PIT.h + 1) return true;
     return false;
   };
-  const nearPath = (x: number, y: number) => {
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) if (path.has(key(x + dx, y + dy))) return true;
-    }
+  const near = (x: number, y: number, r: number, f: (x: number, y: number) => boolean) => {
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (f(x + dx, y + dy)) return true;
     return false;
   };
+  const isPath = (x: number, y: number) => path.has(key(x, y));
+  const isWater = (x: number, y: number) => water.has(key(x, y));
 
+  // 1. Forest mask: low-frequency noise for the woods, a second field whose
+  //    contour lines become winding lanes, and open clearings around camps.
+  const forest = new Uint8Array(WORLD_W * WORLD_H);
   for (let y = 0; y < WORLD_H; y++) {
     for (let x = 0; x < WORLD_W; x++) {
+      if (reserved(x, y)) continue;
       const border = x <= 2 || y <= 2 || x >= WORLD_W - 3 || y >= WORLD_H - 3;
       if (border) {
-        if (!path.has(key(x, y)) && tiles[idx(x, y)] < DUNGEON) objects[idx(x, y)] = hash(x, y) % 3 === 0 ? TREE_TRUNK : TREE;
+        forest[idx(x, y)] = 1;
         continue;
       }
-      if (blocked(x, y) || nearPath(x, y)) continue;
-      const h = hash(x, y);
-      if (h % 17 === 0) {
-        const clump: [number, number][] = [
-          [0, 0],
-          [1, 0],
-          [0, 1],
-          [-1, 0],
-          [1, 1],
-          [-1, 1],
-        ];
-        for (const [dx, dy] of clump) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (blocked(nx, ny) || nearPath(nx, ny)) continue;
-          if (dx !== 0 && hash(nx, ny) % 3 === 0) continue;
-          const pick = hash(nx, ny) % 6;
-          objects[idx(nx, ny)] = pick === 0 ? BUSH : pick === 1 ? TREE_AUTUMN_B : TREES[pick % TREES.length];
-          const placed = objects[idx(nx, ny)];
-          // Some pines grow two tiles tall: the top half sits on the tile above.
-          if ((placed === TREE_AUTUMN || placed === TREE_ROUND) && hash(nx + 7, ny) % 2 === 0 && !blocked(nx, ny - 1) && !nearPath(nx, ny - 1)) {
-            objects[idx(nx, ny - 1)] = placed === TREE_AUTUMN ? PINE_TOP_AUTUMN : PINE_TOP;
-          }
+      if (near(x, y, 2, isPath) || near(x, y, 1, isWater) || nearCamp(x, y, 4)) continue;
+      const wood = valueNoise(x, y, 11, 3) * 0.65 + valueNoise(x, y, 5, 17) * 0.35;
+      const lane = Math.abs(valueNoise(x, y, 15, 41) - 0.5);
+      if (wood > WOOD_T && lane > LANE_W) forest[idx(x, y)] = 1;
+    }
+  }
+  const inForest = (x: number, y: number) => x < 0 || y < 0 || x >= WORLD_W || y >= WORLD_H || forest[idx(x, y)] === 1;
+
+  // 2. Every camp must be reachable from town: cut a 2-wide trail through the
+  //    wood where the flood from spawn cannot get in.
+  const solidNow = (x: number, y: number) =>
+    inForest(x, y) || tileIsSolid(objects[idx(x, y)]) || tileIsSolid(tiles[idx(x, y)]);
+  for (const camp of spawnAt) {
+    const seen = new Uint8Array(WORLD_W * WORLD_H);
+    const q = [idx(SPAWN_TILE.x, SPAWN_TILE.y)];
+    seen[q[0]] = 1;
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h] % WORLD_W;
+      const y = Math.floor(q[h] / WORLD_W);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= WORLD_W || ny >= WORLD_H || solidNow(nx, ny)) continue;
+        const ni = idx(nx, ny);
+        if (seen[ni]) continue;
+        seen[ni] = 1;
+        q.push(ni);
+      }
+    }
+    const start = idx(camp.tx, camp.ty);
+    if (seen[start]) continue;
+    const prev = new Int32Array(WORLD_W * WORLD_H).fill(-1);
+    const bq = [start];
+    prev[start] = start;
+    let hit = -1;
+    for (let h = 0; h < bq.length && hit < 0; h++) {
+      const x = bq[h] % WORLD_W;
+      const y = Math.floor(bq[h] / WORLD_W);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 3 || ny < 3 || nx >= WORLD_W - 3 || ny >= WORLD_H - 3) continue;
+        const ni = idx(nx, ny);
+        if (prev[ni] !== -1) continue;
+        if (tileIsSolid(tiles[ni]) || tileIsSolid(objects[ni])) continue;
+        prev[ni] = bq[h];
+        if (seen[ni]) {
+          hit = ni;
+          break;
         }
-      } else if (h % 29 === 0) {
-        objects[idx(x, y)] = TREE_AUTUMN_B;
-      } else if (h % 11 === 0) {
-        objects[idx(x, y)] = h % 3 === 0 ? MUSHROOM : h % 2 === 0 ? FLOWER_GRASS : BUSH;
+        bq.push(ni);
+      }
+    }
+    for (let cur = hit, guard = 0; cur >= 0 && guard < 600; guard++) {
+      const x = cur % WORLD_W;
+      const y = Math.floor(cur / WORLD_W);
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        if (x + dx < WORLD_W - 3 && y + dy < WORLD_H - 3) forest[idx(x + dx, y + dy)] = 0;
+      }
+      if (cur === start) break;
+      cur = prev[cur];
+    }
+  }
+
+  // 3. The block art needs at least 3 cells of wood across in both axes (crowns,
+  //    a middle row, trunks). Thinner strands are opened up (this only frees ground).
+  const run = (x: number, y: number, dx: number, dy: number) => {
+    let n = 1;
+    for (let k = 1; k < 3 && inForest(x + dx * k, y + dy * k); k++) n++;
+    for (let k = 1; k < 3 && inForest(x - dx * k, y - dy * k); k++) n++;
+    return n;
+  };
+  for (let pass = 0; pass < 12; pass++) {
+    let changed = 0;
+    for (let y = 0; y < WORLD_H; y++) {
+      for (let x = 0; x < WORLD_W; x++) {
+        if (!forest[idx(x, y)]) continue;
+        if (run(x, y, 1, 0) < 3 || run(x, y, 0, 1) < 3) {
+          forest[idx(x, y)] = 0;
+          changed++;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+
+  // 4. Autotile. Each connected wood is either green or autumn; the outer ring
+  //    and anything touching it stays green so the map edge reads as one wall.
+  const tone = new Uint8Array(WORLD_W * WORLD_H);
+  for (let i = 0; i < forest.length; i++) {
+    if (!forest[i] || tone[i]) continue;
+    const ox = i % WORLD_W;
+    const oy = Math.floor(i / WORLD_W);
+    const q = [i];
+    let pick = hash(ox, oy) % 3 === 0 ? 2 : 1;
+    tone[i] = 3;
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h] % WORLD_W;
+      const y = Math.floor(q[h] / WORLD_W);
+      if (x <= 2 || y <= 2 || x >= WORLD_W - 3 || y >= WORLD_H - 3) pick = 1;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= WORLD_W || ny >= WORLD_H) continue;
+        const ni = idx(nx, ny);
+        if (!forest[ni] || tone[ni]) continue;
+        tone[ni] = 3;
+        q.push(ni);
+      }
+    }
+    for (const c of q) tone[c] = pick;
+  }
+  for (let y = 0; y < WORLD_H; y++) {
+    for (let x = 0; x < WORLD_W; x++) {
+      const i = idx(x, y);
+      if (!forest[i]) continue;
+      const set = tone[i] === 2 ? FOREST_AUTUMN : FOREST_GREEN;
+      const n = inForest(x, y - 1);
+      const s = inForest(x, y + 1);
+      const w = inForest(x - 1, y);
+      const e = inForest(x + 1, y);
+      // Outer corners stay open grass: the neighbouring edge pieces already round the clump off.
+      if ((!n || !s) && (!w || !e)) continue;
+      objects[i] = !n ? set.top : !s ? set.bottom : !w ? set.left : !e ? set.right : set.mid;
+    }
+  }
+  // Corner cells were left out above; drop them from the mask so step 5 treats them as open.
+  for (let i = 0; i < forest.length; i++) if (forest[i] && objects[i] === 0) forest[i] = 0;
+
+  // 5. Loose trees and undergrowth on the open ground, thicker near the wood edge.
+  for (let y = 3; y < WORLD_H - 3; y++) {
+    for (let x = 3; x < WORLD_W - 3; x++) {
+      if (forest[idx(x, y)] || reserved(x, y)) continue;
+      if (near(x, y, 1, isPath) || near(x, y, 1, isWater) || nearCamp(x, y, 2)) continue;
+      // Leave a free ring so the loose trees never pinch a lane shut.
+      if (near(x, y, 1, (ax, ay) => forest[idx(ax, ay)] === 1)) continue;
+      const edge = near(x, y, 2, (ax, ay) => forest[idx(ax, ay)] === 1);
+      const h = hash(x, y);
+      if (h % (edge ? 9 : 41) !== 0) continue;
+      if (near(x, y, 1, (ax, ay) => objects[idx(ax, ay)] !== 0)) continue;
+      const pick = hash(x + 5, y) % 7;
+      const placed = pick === 0 ? BUSH : pick === 1 ? MUSHROOM : TREES[pick % TREES.length];
+      objects[idx(x, y)] = placed;
+      if ((placed === TREE_AUTUMN || placed === TREE_ROUND) && hash(x, y + 3) % 2 === 0 && objects[idx(x, y - 1)] === 0 && !reserved(x, y - 1)) {
+        objects[idx(x, y - 1)] = placed === TREE_AUTUMN ? PINE_TOP_AUTUMN : PINE_TOP;
       }
     }
   }

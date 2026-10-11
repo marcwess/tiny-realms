@@ -48,17 +48,23 @@ export const BRIDGE_S = 152;
 
 /** Not a sheet frame (Tiny Dungeon's banner is baked onto a brick wall): the client paints a pole and pennant. */
 export const PIT_BANNER = 153;
+/** Painted by the client. Not a sheet frame and not solid, so shots pass over them. */
+export const LILY = 154;
+export const PEBBLE = 155;
 export const GRAVE_STONE = DUNGEON + 65;
 
 const TALL_IDS = [
-  TREE, TREE_TRUNK, TREE_SMALL, TREE_ROUND, TREE_AUTUMN, TREE_AUTUMN_B, PINE_TOP_AUTUMN, PINE_TOP, 6, 8, 19, 22, 30,
+  TREE, TREE_TRUNK, TREE_SMALL, TREE_ROUND, TREE_AUTUMN, TREE_AUTUMN_B, PINE_TOP_AUTUMN, PINE_TOP,
   TARGET, SIGN, WELL, CAMPFIRE, PIT_BANNER, GRAVE_STONE,
   FENCE, FENCE_L, FENCE_R, POST, 81,
   52, 53, 54, 55, 64, 65, 66, 72, 73, DOOR, 75, 84, 85, 86, 87,
 ];
 
 const SOLID_IDS = [
-  TREE, TREE_TRUNK, TREE_SMALL, TREE_ROUND, TREE_AUTUMN, TREE_AUTUMN_B, PINE_TOP_AUTUMN, PINE_TOP, 6, 8, 19, 22, 30,
+  TREE, TREE_TRUNK, TREE_SMALL, TREE_ROUND, TREE_AUTUMN, TREE_AUTUMN_B, PINE_TOP_AUTUMN, PINE_TOP,
+  // Forest block pieces (green 7/18/19/20/31, autumn 10/21/22/23/34). Each piece stays
+  // inside its own cell, so they are painted flat into the chunk, not as tall props.
+  7, 18, 19, 20, 31, 10, 21, 22, 23, 34,
   TARGET, SIGN, WELL, CAMPFIRE, PIT_BANNER, GRAVE_STONE,
   FENCE, FENCE_L, FENCE_R, POST, 81,
   52, 53, 54, 55, 64, 65, 66, 72, 73, 75, 84, 85, 86, 87,
@@ -86,4 +92,49 @@ export function tileSheet(id: number): 'town' | 'dungeon' {
 
 export function tileFrame(id: number): number {
   return id >= DUNGEON ? id - DUNGEON : id;
+}
+
+/** Actors and props are drawn at the full 16px cell. A shorter display size drops a source row. */
+export const SPRITE_PX = 16;
+
+/** Nearest-neighbor scale of an RGBA buffer. */
+export function scaleNearest(src: Uint8Array, sw: number, sh: number, dw: number, dh: number): Uint8Array {
+  const out = new Uint8Array(dw * dh * 4);
+  for (let y = 0; y < dh; y++) {
+    const sy = Math.min(sh - 1, Math.floor((y * sh) / dh));
+    for (let x = 0; x < dw; x++) {
+      const sx = Math.min(sw - 1, Math.floor((x * sw) / dw));
+      const si = (sy * sw + sx) * 4;
+      const di = (y * dw + x) * 4;
+      out[di] = src[si];
+      out[di + 1] = src[si + 1];
+      out[di + 2] = src[si + 2];
+      out[di + 3] = src[si + 3];
+    }
+  }
+  return out;
+}
+
+/**
+ * Draw a 16px cell at `display` size with the origin on the feet.
+ * The box is never shorter than the source, so the top row is not cropped.
+ */
+export function placeFeet(cell: Uint8Array, display = SPRITE_PX): Uint8Array {
+  const scaled = scaleNearest(cell, SPRITE_PX, SPRITE_PX, display, display);
+  const h = Math.max(SPRITE_PX, display);
+  const w = Math.max(SPRITE_PX, display);
+  const out = new Uint8Array(w * h * 4);
+  const y0 = h - display;
+  const x0 = Math.floor((w - display) / 2);
+  for (let y = 0; y < display; y++) {
+    for (let x = 0; x < display; x++) {
+      const si = (y * display + x) * 4;
+      const di = ((y0 + y) * w + x0 + x) * 4;
+      out[di] = scaled[si];
+      out[di + 1] = scaled[si + 1];
+      out[di + 2] = scaled[si + 2];
+      out[di + 3] = scaled[si + 3];
+    }
+  }
+  return out;
 }
