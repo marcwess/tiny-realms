@@ -1,0 +1,253 @@
+:root {
+  color-scheme: dark;
+  --bg: #1a1214;
+  --panel: #2a1c1a;
+  --ink: #f3e6d0;
+  --muted: #b9a48c;
+  --line: #6b4a38;
+  --hp: #d4533c;
+  --hp-bg: #3a201c;
+  --accent: #e2a15a;
+  --pvp: #e05a4f;
+  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+#game, #game canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+button, input { font: inherit; color: inherit; }
+input {
+  font-size: 16px;
+  touch-action: manipulation;
+  user-select: text;
+  -webkit-user-select: text;
+  width: 100%;
+  background: #140e10;
+  border: 2px solid var(--line);
+  padding: 12px;
+  border-radius: 0;
+}
+button {
+  min-height: 56px;
+  min-width: 56px;
+  background: #3d2a24;
+  border: 2px solid var(--line);
+  padding: 12px 16px;
+  cursor: pointer;
+}
+button.primary { background: #8a4b2f; border-color: var(--accent); }
+button.ghost { background: transparent; }
+button:active { transform: translateY(1px); }
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: auto;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  background: rgba(18, 10, 12, 0.92);
+  touch-action: pan-y;
+}
+.panel {
+  max-width: 440px;
+  margin: 0 auto;
+  background: var(--panel);
+  border: 3px solid #4a332c;
+  padding: 20px 16px 16px;
+}
+.panel.wide { max-width: 560px; }
+h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: 1px; }
+h2 { font-size: 16px; margin: 18px 0 8px; color: var(--accent); }
+.eyebrow, .lede, .credits { color: var(--muted); }
+.lede { margin-top: 0; }
+label { display: block; margin: 12px 0; color: var(--muted); }
+.row { display: flex; gap: 8px; }
+.row > button { flex: 1; }
+.spread { justify-content: space-between; align-items: center; }
+.error { color: #ffb4a8; min-height: 1.2em; }
+.credits { font-size: 12px; margin: 8px 0 0; }
+.cards { display: flex; flex-direction: column; gap: 8px; }
+.class-card, .hero-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  width: 100%;
+  background: #241714;
+}
+.class-card.selected, .hero-card.selected { border-color: var(--accent); background: #3a241c; }
+.sprite {
+  width: 80px;
+  height: 80px;
+  flex: 0 0 80px;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+}
+.role { color: var(--muted); font-size: 14px; margin: 4px 0 0; }
+#hud { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+#top {
+  display: flex;
+  justify-content: space-between;
+  padding: calc(8px + env(safe-area-inset-top)) 10px 0;
+  gap: 8px;
+}
+#vitals, #top-right { display: flex; flex-direction: column; gap: 4px; }
+#top-right { align-items: flex-end; position: relative; }
+#hp-row { display: flex; align-items: center; gap: 6px; }
+#hud canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+/* Text canvases keep their pixel size; a stretched flex item scales the glyphs. */
+#hud-name, #hud-hp { align-self: flex-start; }
+#hud-heart { width: 28px; height: 24px; flex: 0 0 auto; }
+#hp {
+  width: min(42vw, 180px);
+  height: 12px;
+  background: var(--hp-bg);
+  border: 2px solid #1a100e;
+  box-shadow: 0 0 0 1px #c4a070;
+}
+#hp-fill { height: 100%; width: 100%; background: linear-gradient(#e07060, var(--hp)); }
+#minimap {
+  width: 128px;
+  height: 96px;
+  image-rendering: pixelated;
+  background: #1a1214;
+  border: 2px solid #c4a070;
+}
+#btn-menu, #btn-logout { pointer-events: auto; }
+#btn-menu {
+  min-height: 36px;
+  min-width: 72px;
+  padding: 4px 10px;
+  font-family: Georgia, serif;
+  font-size: 14px;
+  letter-spacing: 1px;
+  background: #2a1c1a;
+  border-color: #c4a070;
+}
+#menu-pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #2a1c1a;
+  border: 2px solid #c4a070;
+  padding: 8px;
+  z-index: 6;
+}
+#btn-logout { min-height: 44px; padding: 8px 12px; font-family: Georgia, serif; font-size: 16px; }
+#banner {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  background: #1a0808;
+  border: 3px solid var(--pvp);
+  padding: 10px 14px;
+  text-align: center;
+  max-width: 92vw;
+}
+#dead {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+  background: rgba(12, 8, 10, 0.88);
+  padding: 12px;
+  border: 2px solid #c4a070;
+}
+#joy-zone {
+  position: absolute;
+  left: 0;
+  top: 72px;
+  bottom: 0;
+  width: 50%;
+  pointer-events: auto;
+  touch-action: none;
+}
+#joy-base, #joy-knob {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+#joy-base {
+  width: 112px;
+  height: 112px;
+  margin-left: -56px;
+  margin-top: -56px;
+  background: rgba(243, 230, 208, 0.16);
+  border: 2px solid rgba(243, 230, 208, 0.7);
+}
+#joy-knob {
+  width: 56px;
+  height: 56px;
+  margin-left: -28px;
+  margin-top: -28px;
+  background: rgba(226, 161, 90, 0.9);
+}
+#actions {
+  position: absolute;
+  right: calc(12px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: auto;
+}
+#btn-attack, #btn-skill {
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+}
+#btn-attack {
+  width: 84px;
+  height: 84px;
+  background: #8d2f28;
+  border-color: #f0c2a0;
+  font-weight: 700;
+}
+#btn-skill {
+  width: 68px;
+  height: 68px;
+  position: relative;
+  background: #24324a;
+  border-color: #9eb4d4;
+}
+#btn-skill svg {
+  position: absolute;
+  inset: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+}
+#skill-ring {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.65);
+  stroke-width: 3;
+  stroke-dasharray: 100;
+  transform: rotate(-90deg);
+  transform-origin: 18px 18px;
+}
+@media (orientation: landscape) {
+  .panel { margin-top: 8px; }
+  #joy-zone { top: 48px; }
+}
