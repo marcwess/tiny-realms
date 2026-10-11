@@ -92,12 +92,13 @@ function applySheet(el: HTMLElement, tile: number, scale: number): void {
 function applyWeapon(el: HTMLElement, classId: number): void {
   if (classId === 1) {
     el.style.backgroundImage = `url("${import.meta.env.BASE_URL}assets/bow.png")`;
-    el.style.backgroundSize = '64px 64px';
+    // 3/4 of the hero's scale, as in game, held in front of the body: clear of the
+    // face and of the card text beside the 80px sprite box.
+    el.style.backgroundSize = '48px 48px';
     el.style.backgroundPosition = '0 0';
     el.style.backgroundRepeat = 'no-repeat';
-    // Held out in front of the body, so the bow does not cover the face.
-    el.style.left = '40px';
-    el.style.top = '6px';
+    el.style.left = '44px';
+    el.style.top = '22px';
     return;
   }
   applySheet(el, classId === 2 ? 129 : 104, 4);
