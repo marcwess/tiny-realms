@@ -464,7 +464,7 @@ export class GameScene extends Phaser.Scene {
         } else if (ev.ev === EV.DEATH) {
           this.playFx(FX.SMOKE, ev.x, ev.y);
           if (ev.a === this.selfId) this.deadUntil = performance.now() + 3000;
-        } else if (ev.ev === EV.SWING && ev.a !== this.selfId) {
+        } else if (ev.ev === EV.SWING) {
           const ox = ev.b === 3 ? 140 : ev.b === 7 ? -140 : 0;
           this.playFx(ev.fx || FX.HIT, ev.x + ox, ev.y);
         } else if (ev.ev === EV.BANNER && ev.n === 3) {
