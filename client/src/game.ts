@@ -15,7 +15,7 @@ import {
   WORLD_W,
   tileIsSolid,
 } from '../../shared/src/constants.ts';
-import { DUNGEON, tileFrame, tileIsTall } from '../../shared/src/tiles.ts';
+import { BRIDGE, BRIDGE_N, BRIDGE_S, CAMPFIRE, DUNGEON, PIT_BANNER, tileFrame, tileIsTall } from '../../shared/src/tiles.ts';
 import { sampleInterp, type InterpSample } from '../../shared/src/interest.ts';
 import {
   decodeAdd,
@@ -36,6 +36,11 @@ export const bridge = {
   queue: [] as Uint8Array[],
   send: (_buf: Uint8Array) => {},
   onHud: (_s: HudState) => {},
+  /** A new socket is opening: stop sending until its WELCOME resets the predictor. */
+  newSession() {
+    if (this.scene) this.scene.joined = false;
+    this.queue.length = 0;
+  },
   deliver(buf: Uint8Array) {
     if (this.scene) this.scene.onPacket(buf);
     else this.queue.push(buf);
@@ -103,6 +108,86 @@ interface ChunkDraw {
 }
 
 const WATER_IDS = new Set([48, 49, 50, 60, 61, 62, 76, 77, 79, 126]);
+// Tiny Town has no water frames. The shore ids from world.ts only say which
+// sides touch land; the water itself is painted here.
+const WATER_N = new Set([48, 49, 50]);
+const WATER_S = new Set([60, 61, 62]);
+const WATER_W = new Set([48, 60, 76]);
+const WATER_E = new Set([50, 62, 79]);
+
+function paintWater(g: CanvasRenderingContext2D, id: number, dx: number, dy: number): void {
+  g.fillStyle = '#3d7fd0';
+  g.fillRect(dx, dy, TILE, TILE);
+  const h = (Math.imul(dx + 7, 374761393) ^ Math.imul(dy + 3, 668265263)) >>> 0;
+  g.fillStyle = '#5b9ee6';
+  g.fillRect(dx + (h % 9) + 1, dy + ((h >>> 4) % 5) + 3, 5, 1);
+  g.fillRect(dx + ((h >>> 8) % 8) + 2, dy + ((h >>> 12) % 4) + 10, 4, 1);
+  if (id === 77) {
+    g.fillStyle = '#9fd0f5';
+    g.fillRect(dx + ((h >>> 16) % 10) + 2, dy + 7, 3, 1);
+  }
+  const foam = '#bfe3f7';
+  const bank = '#24442b';
+  if (WATER_N.has(id)) {
+    g.fillStyle = '#2d63a8';
+    g.fillRect(dx, dy, TILE, 3);
+    g.fillStyle = bank;
+    g.fillRect(dx, dy, TILE, 1);
+  }
+  if (WATER_S.has(id)) {
+    g.fillStyle = foam;
+    g.fillRect(dx, dy + TILE - 2, TILE, 1);
+    g.fillStyle = bank;
+    g.fillRect(dx, dy + TILE - 1, TILE, 1);
+  }
+  if (WATER_W.has(id)) {
+    g.fillStyle = foam;
+    g.fillRect(dx + 1, dy, 1, TILE);
+    g.fillStyle = bank;
+    g.fillRect(dx, dy, 1, TILE);
+  }
+  if (WATER_E.has(id)) {
+    g.fillStyle = foam;
+    g.fillRect(dx + TILE - 2, dy, 1, TILE);
+    g.fillStyle = bank;
+    g.fillRect(dx + TILE - 1, dy, 1, TILE);
+  }
+}
+
+/** Planks run across the river (east-west road), with rails on the open edges. */
+function paintBridge(g: CanvasRenderingContext2D, id: number, dx: number, dy: number): void {
+  g.fillStyle = '#b07440';
+  g.fillRect(dx, dy, TILE, TILE);
+  g.fillStyle = '#8a5530';
+  for (let x = 3; x < TILE; x += 4) g.fillRect(dx + x, dy, 1, TILE);
+  g.fillStyle = '#c98d55';
+  for (let x = 0; x < TILE; x += 4) g.fillRect(dx + x, dy + ((x >> 2) % 2 ? 5 : 11), 3, 1);
+  if (id === BRIDGE_N || id === BRIDGE_S) {
+    const ry = id === BRIDGE_N ? dy : dy + TILE - 4;
+    g.fillStyle = '#3b2416';
+    g.fillRect(dx, ry, TILE, 4);
+    g.fillStyle = '#7a4a28';
+    g.fillRect(dx, ry + 1, TILE, 2);
+    g.fillStyle = '#3b2416';
+    g.fillRect(dx + 7, ry, 2, 4);
+  }
+}
+
+function paintBanner(g: CanvasRenderingContext2D, dx: number, dy: number): void {
+  g.fillStyle = '#2a1a12';
+  g.fillRect(dx + 4, dy + 1, 3, 15);
+  g.fillRect(dx + 6, dy + 2, 8, 9);
+  g.fillRect(dx + 7, dy + 11, 6, 2);
+  g.fillRect(dx + 8, dy + 13, 4, 1);
+  g.fillStyle = '#8a5a34';
+  g.fillRect(dx + 5, dy + 1, 1, 15);
+  g.fillStyle = '#c8322c';
+  g.fillRect(dx + 7, dy + 3, 6, 7);
+  g.fillRect(dx + 8, dy + 10, 4, 2);
+  g.fillStyle = '#f2a33a';
+  g.fillRect(dx + 9, dy + 5, 2, 3);
+}
+
 const ROOF_IDS = new Set([52, 53, 54, 64, 65, 66, 72, 73, 75]);
 const PATH_IDS = new Set([12, 13, 14, 24, 25, 26, 36, 37, 38, 39, 40, 41, 42]);
 
@@ -292,6 +377,34 @@ export class GameScene extends Phaser.Scene {
       draw(g);
       this.textures.addCanvas(key, c);
     };
+    // Three-frame campfire flame. The Gigapack fire/smoke strips are bursts
+    // (an expanding ring), which read as a pulsing circle when looped.
+    const FLAMES = [
+      ['..o.....', '..oo..o.', '.oyo..o.', '.oyyooo.', 'oyywyyo.', 'oywwwyoo', 'oywwwyyo', '.oyyyyo.'],
+      ['....o...', '.o..oo..', '.o.oyo..', '.ooyyo.o', '.oyywyoo', 'ooywwwyo', 'oyywwwyo', '.oyyyyo.'],
+      ['...o....', '...oo.o.', '..oyo.o.', 'o.oyyoo.', 'ooyywyo.', 'oyywwwoo', 'oyywwwyo', '.oyyyyo.'],
+    ];
+    paint('campflame', 8 * FLAMES.length, 8, (g) => {
+      const col: Record<string, string> = { o: '#e2531f', y: '#f7b733', w: '#fff3b0' };
+      FLAMES.forEach((rows, f) => {
+        rows.forEach((row, y) => {
+          for (let x = 0; x < row.length; x++) {
+            const c = col[row[x]];
+            if (!c) continue;
+            g.fillStyle = c;
+            g.fillRect(f * 8 + x, y, 1, 1);
+          }
+        });
+      });
+    });
+    const flameTex = this.textures.get('campflame');
+    for (let f = 0; f < FLAMES.length; f++) flameTex.add(String(f), 0, f * 8, 0, 8, 8);
+    this.anims.create({
+      key: 'campflame-loop',
+      frames: FLAMES.map((_, f) => ({ key: 'campflame', frame: String(f) })),
+      frameRate: 7,
+      repeat: -1,
+    });
     paint('shadow', 12, 6, (g) => {
       g.fillStyle = 'rgba(20, 28, 16, 0.45)';
       g.beginPath();
@@ -565,7 +678,7 @@ export class GameScene extends Phaser.Scene {
         g.ellipse(dx + 8, dy + 13, 5, 2.2, 0, 0, Math.PI * 2);
         g.fill();
         this.blitTile(rg, obj, dx, 0);
-        if (obj === 57) fires.push({ x: cx * size + dx + 8, y: cy * size + dy + 12 });
+        if (obj === CAMPFIRE) fires.push({ x: cx * size + dx + 8, y: cy * size + dy + 12 });
       } else {
         this.blitTile(g, obj, dx, dy);
       }
@@ -593,11 +706,9 @@ export class GameScene extends Phaser.Scene {
     }
     const fireSprites: Phaser.GameObjects.Sprite[] = [];
     for (const f of fires) {
-      const flame = this.add.sprite(f.x, f.y, 'fx-fire').setDepth(f.y).setScale(0.45).setOrigin(0.5, 0.8);
-      flame.play('fx-fire-loop');
-      const smoke = this.add.sprite(f.x, f.y - 10, 'fx-smoke').setDepth(f.y).setScale(0.4).setOrigin(0.5, 1).setAlpha(0.75);
-      smoke.play('fx-smoke-loop');
-      fireSprites.push(flame, smoke);
+      const flame = this.add.sprite(f.x, f.y - 3, 'campflame', '0').setDepth(f.y + 5).setOrigin(0.5, 1);
+      flame.play({ key: 'campflame-loop', startFrame: (f.x >> 4) % 3 });
+      fireSprites.push(flame);
     }
     this.chunkDraw.set(key, { ground: img, rows: rowImages, fires: fireSprites, roofs: roofImages });
     this.drawMinimap();
@@ -610,15 +721,15 @@ export class GameScene extends Phaser.Scene {
     const sx = (frame % 12) * TILE;
     const sy = Math.floor(frame / 12) * TILE;
     if (WATER_IDS.has(id)) {
-      const scratch = this.scratch();
-      const sg = scratch.getContext('2d')!;
-      sg.clearRect(0, 0, TILE, TILE);
-      sg.drawImage(sheet, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
-      sg.globalCompositeOperation = 'source-atop';
-      sg.fillStyle = 'rgba(24, 118, 214, 0.55)';
-      sg.fillRect(0, 0, TILE, TILE);
-      sg.globalCompositeOperation = 'source-over';
-      g.drawImage(scratch, dx, dy);
+      paintWater(g, id, dx, dy);
+      return;
+    }
+    if (id === PIT_BANNER) {
+      paintBanner(g, dx, dy);
+      return;
+    }
+    if (id === BRIDGE || id === BRIDGE_N || id === BRIDGE_S) {
+      paintBridge(g, id, dx, dy);
       return;
     }
     g.drawImage(sheet, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
@@ -870,12 +981,8 @@ export class GameScene extends Phaser.Scene {
     const viewX = rx / SUB;
     const viewY = ry / SUB;
     cam.setScroll(Math.round(viewX - cam.width / z / 2), Math.round(viewY - cam.height / z / 2));
-    for (const chunk of this.chunkDraw.values()) {
-      for (const roof of chunk.roofs) {
-        const behind = viewY < roof.y - 2 && Math.abs(viewX - roof.x - 8) < 22;
-        roof.setAlpha(behind ? 0.38 : 1);
-      }
-    }
+    // Roofs and walls are solid, so a hero can never stand under one; no fade is
+    // needed (a fading roof only flickered whenever someone walked past the eaves).
     this.driftMotes(cam.scrollX, cam.scrollY, cam.width / z, cam.height / z, now);
     for (let i = this.floaters.length - 1; i >= 0; i--) {
       const f = this.floaters[i];
@@ -948,6 +1055,7 @@ export class GameScene extends Phaser.Scene {
           let color = '#5eae4c';
           if (id >= DUNGEON) color = '#6d625c';
           else if (WATER_IDS.has(id)) color = '#3f86c4';
+          else if (id >= BRIDGE && id <= BRIDGE_S) color = '#9a6236';
           else if (PATH_IDS.has(id)) color = '#d2a15c';
           if (obj && tileIsSolid(obj)) color = '#2c6a38';
           g.fillStyle = color;

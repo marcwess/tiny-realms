@@ -17,6 +17,9 @@ export interface InputCmd {
  * - The queue cap drops only a flood of *newest* commands past 64. A stall
  *   does not enqueue inputs, so a resume cannot hit this path.
  */
+const RESTART_SEQ = 40;
+const RESTART_GAP = 100;
+
 export class InputQueue {
   lastProcessed = 0;
   private q: InputCmd[] = [];
@@ -27,7 +30,16 @@ export class InputQueue {
 
   push(input: InputCmd): void {
     if (!Number.isFinite(input.seq) || input.seq <= 0) return;
-    if (input.seq <= this.lastProcessed) return;
+    if (input.seq <= this.lastProcessed) {
+      // A client that reconnects restarts at seq 1. If a few inputs from its
+      // previous session reached this queue first, every new input would look
+      // stale until the count caught up (one second per 20 ticks played), so
+      // the hero froze after a re-login or a network blip. Treat a low seq
+      // far behind as a restart.
+      if (input.seq > RESTART_SEQ || this.lastProcessed - input.seq < RESTART_GAP) return;
+      this.lastProcessed = input.seq - 1;
+      this.q = [];
+    }
     for (let i = 0; i < this.q.length; i++) {
       if (this.q[i].seq === input.seq) return;
     }

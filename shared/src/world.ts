@@ -1,7 +1,17 @@
-import { CHUNK, WORLD_H, WORLD_W } from './constants.ts';
+import { CHUNK, TILE_SUB, WORLD_H, WORLD_W } from './constants.ts';
+import { blocked } from './sim.ts';
 import {
-  BANNER,
+  BRIDGE,
+  BRIDGE_N,
+  BRIDGE_S,
   BUSH,
+  PIT_BANNER,
+  GRAVE_STONE,
+  TARGET,
+  TREE_AUTUMN,
+  TREE_AUTUMN_B,
+  PINE_TOP,
+  PINE_TOP_AUTUMN,
   CAMPFIRE,
   DUNGEON,
   DOOR,
@@ -16,10 +26,7 @@ import {
   HOUSE_WALL,
   MUSHROOM,
   STALL,
-  PEBBLE,
   POST,
-  RED_BUSH,
-  ROCK,
   SIGN,
   TREE,
   TREE_ROUND,
@@ -49,7 +56,7 @@ const WALL_D = DUNGEON + 40;
 const STAIRS = DUNGEON + 56;
 const BANNER_D = DUNGEON + 29;
 
-const TREES = [TREE, TREE_TRUNK, TREE_SMALL, TREE_ROUND];
+const TREES = [TREE, TREE_TRUNK, TREE_ROUND, TREE_AUTUMN, TREE_AUTUMN_B];
 
 function idx(tx: number, ty: number): number {
   return ty * WORLD_W + tx;
@@ -111,7 +118,7 @@ export function buildWorld(): WorldData {
         tiles[idx(x, y)] = waterTile(x, y, isWater);
         continue;
       }
-      if (isPath(x, y)) tiles[idx(x, y)] = pathTile(x, y, isPath);
+      if (isPath(x, y)) tiles[idx(x, y)] = x >= 28 && x <= 32 && y >= 8 && y <= 88 ? bridgeTile(x, y, isPath) : pathTile(x, y, isPath);
     }
   }
 
@@ -140,6 +147,12 @@ export function buildWorld(): WorldData {
     solid[i] = tileIsSolid(objects[i]) || tileIsSolid(tiles[i]) ? 1 : 0;
   }
   return { tiles, objects, solid, spawns };
+}
+
+function bridgeTile(x: number, y: number, isPath: (x: number, y: number) => boolean): number {
+  if (!isPath(x, y - 1)) return BRIDGE_N;
+  if (!isPath(x, y + 1)) return BRIDGE_S;
+  return BRIDGE;
 }
 
 function pathTile(x: number, y: number, isPath: (x: number, y: number) => boolean): number {
@@ -213,14 +226,14 @@ function paintVillage(tiles: Uint8Array, objects: Uint8Array): void {
   objects[idx(53, 47)] = CAMPFIRE;
   objects[idx(54, 56)] = CAMPFIRE;
   objects[idx(48, 46)] = BUSH;
-  objects[idx(52, 46)] = RED_BUSH;
+  objects[idx(52, 46)] = TREE_AUTUMN_B;
   objects[idx(54, 48)] = MUSHROOM;
   objects[idx(45, 42)] = TREE;
   objects[idx(55, 42)] = TREE_ROUND;
   objects[idx(44, 56)] = TREE_SMALL;
   objects[idx(58, 57)] = TREE;
   stall(objects, 46, 57);
-  objects[idx(47, 58)] = PEBBLE;
+  objects[idx(47, 58)] = MUSHROOM;
   objects[idx(55, 46)] = FENCE;
   objects[idx(55, 47)] = POST;
   for (let y = 42; y <= 58; y++) {
@@ -259,19 +272,18 @@ function paintPit(objects: Uint8Array): void {
     if (!gate) objects[idx(x0, y)] = POST;
     objects[idx(x1, y)] = POST;
   }
-  objects[idx(x0 + 2, y0 + 1)] = BANNER;
-  objects[idx(x1 - 2, y0 + 1)] = BANNER;
-  objects[idx(74, 52)] = ROCK;
-  objects[idx(80, 52)] = PEBBLE;
-  objects[idx(76, 54)] = RED_BUSH;
-  objects[idx(74, 48)] = DUNGEON + 61;
-  objects[idx(81, 49)] = DUNGEON + 60;
-  objects[idx(78, 47)] = DUNGEON + 62;
-  objects[idx(82, 53)] = DUNGEON + 61;
-  objects[idx(75, 54)] = DUNGEON + 60;
-  objects[idx(79, 55)] = DUNGEON + 62;
-  objects[idx(74, 55)] = BANNER;
-  objects[idx(82, 55)] = BANNER;
+  objects[idx(x0 + 2, y0 + 1)] = PIT_BANNER;
+  objects[idx(x1 - 2, y0 + 1)] = PIT_BANNER;
+  objects[idx(74, 52)] = TARGET;
+  objects[idx(80, 52)] = GRAVE_STONE;
+  objects[idx(76, 54)] = TARGET;
+  objects[idx(74, 48)] = GRAVE_STONE;
+  objects[idx(81, 49)] = GRAVE_STONE;
+  objects[idx(78, 47)] = GRAVE_STONE;
+  objects[idx(82, 53)] = GRAVE_STONE;
+  objects[idx(79, 55)] = GRAVE_STONE;
+  objects[idx(74, 55)] = PIT_BANNER;
+  objects[idx(82, 55)] = PIT_BANNER;
 }
 
 function paintWilds(tiles: Uint8Array, objects: Uint8Array, path: Set<string>, water: Set<string>): void {
@@ -317,12 +329,17 @@ function paintWilds(tiles: Uint8Array, objects: Uint8Array, path: Set<string>, w
           if (blocked(nx, ny) || nearPath(nx, ny)) continue;
           if (dx !== 0 && hash(nx, ny) % 3 === 0) continue;
           const pick = hash(nx, ny) % 6;
-          objects[idx(nx, ny)] = pick === 0 ? BUSH : pick === 1 ? 22 : TREES[pick % TREES.length];
+          objects[idx(nx, ny)] = pick === 0 ? BUSH : pick === 1 ? TREE_AUTUMN_B : TREES[pick % TREES.length];
+          const placed = objects[idx(nx, ny)];
+          // Some pines grow two tiles tall: the top half sits on the tile above.
+          if ((placed === TREE_AUTUMN || placed === TREE_ROUND) && hash(nx + 7, ny) % 2 === 0 && !blocked(nx, ny - 1) && !nearPath(nx, ny - 1)) {
+            objects[idx(nx, ny - 1)] = placed === TREE_AUTUMN ? PINE_TOP_AUTUMN : PINE_TOP;
+          }
         }
       } else if (h % 29 === 0) {
-        objects[idx(x, y)] = ROCK;
+        objects[idx(x, y)] = TREE_AUTUMN_B;
       } else if (h % 11 === 0) {
-        objects[idx(x, y)] = h % 3 === 0 ? MUSHROOM : h % 2 === 0 ? FLOWER_GRASS : RED_BUSH;
+        objects[idx(x, y)] = h % 3 === 0 ? MUSHROOM : h % 2 === 0 ? FLOWER_GRASS : BUSH;
       }
     }
   }
@@ -399,6 +416,71 @@ export function chunkSlice(world: WorldData, cx: number, cy: number): { ground: 
     }
   }
   return { ground, object };
+}
+
+/** Tiles a body can stand on and walk to from the town spawn. */
+export function reachableFromSpawn(world: WorldData): Uint8Array {
+  const solidAt = solidAtOf(world);
+  const seen = new Uint8Array(WORLD_W * WORLD_H);
+  const q = [idx(SPAWN_TILE.x, SPAWN_TILE.y)];
+  seen[q[0]] = 1;
+  for (let h = 0; h < q.length; h++) {
+    const x = q[h] % WORLD_W;
+    const y = Math.floor(q[h] / WORLD_W);
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= WORLD_W || ny >= WORLD_H) continue;
+      const i = idx(nx, ny);
+      if (seen[i] || solidAt(nx, ny)) continue;
+      seen[i] = 1;
+      q.push(i);
+    }
+  }
+  return seen;
+}
+
+/**
+ * A saved position from an older map can sit inside a tree, a house or the
+ * river now. Keep it if the body is free and connected to town; otherwise move
+ * to the nearest open tile centre within 8 tiles, or null (use the spawn).
+ */
+export function openSpotNear(world: WorldData, reach: Uint8Array, x: number, y: number): { x: number; y: number } | null {
+  const solidAt = solidAtOf(world);
+  const ok = (px: number, py: number) => {
+    const tx = Math.floor(px / TILE_SUB);
+    const ty = Math.floor(py / TILE_SUB);
+    if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) return false;
+    return reach[idx(tx, ty)] === 1 && !blocked(px, py, solidAt);
+  };
+  if (Number.isFinite(x) && Number.isFinite(y) && ok(x, y)) return { x, y };
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const tx0 = Math.floor(x / TILE_SUB);
+  const ty0 = Math.floor(y / TILE_SUB);
+  for (let r = 1; r <= 8; r++) {
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (let ty = ty0 - r; ty <= ty0 + r; ty++) {
+      for (let tx = tx0 - r; tx <= tx0 + r; tx++) {
+        if (Math.max(Math.abs(tx - tx0), Math.abs(ty - ty0)) !== r) continue;
+        const px = tx * TILE_SUB + TILE_SUB / 2;
+        const py = ty * TILE_SUB + TILE_SUB / 2;
+        if (!ok(px, py)) continue;
+        const d = (px - x) * (px - x) + (py - y) * (py - y);
+        if (d < bestD) {
+          bestD = d;
+          best = { x: px, y: py };
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
 }
 
 export function validateWorld(world: WorldData): string[] {

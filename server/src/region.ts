@@ -30,8 +30,8 @@ import {
   type EvMsg,
   type SnapEnt,
 } from '../../shared/src/protocol.ts';
-import { applyMovement, decayKnock, dirFromVector, dist2, type SolidAt } from '../../shared/src/sim.ts';
-import { buildWorld, chunkSlice, solidAtOf, type WorldData } from '../../shared/src/world.ts';
+import { applyMovement, blocked, decayKnock, dirFromVector, dist2, type SolidAt } from '../../shared/src/sim.ts';
+import { buildWorld, chunkSlice, openSpotNear, reachableFromSpawn, solidAtOf, type WorldData } from '../../shared/src/world.ts';
 import {
   ENTRANCES,
   REGIONS,
@@ -158,6 +158,7 @@ export class RegionSim {
   readonly id = 'overworld';
   readonly world: WorldData;
   readonly solidAt: SolidAt;
+  private readonly reach: Uint8Array;
   tickN = 0;
   private nextId = 1;
   private players = new Map<number, Player>();
@@ -170,6 +171,7 @@ export class RegionSim {
   constructor() {
     this.world = buildWorld();
     this.solidAt = solidAtOf(this.world);
+    this.reach = reachableFromSpawn(this.world);
     for (const s of this.world.spawns) {
       const def = MONSTERS[s.monsterId];
       const homeX = s.tx * TILE_SUB + TILE_SUB / 2;
@@ -274,10 +276,14 @@ export class RegionSim {
     let x = opts.x;
     let y = opts.y;
     let hp = opts.hp;
-    if (hp <= 0 || this.solidAt(tileOf(x), tileOf(y))) {
+    const spot = hp > 0 ? openSpotNear(this.world, this.reach, x, y) : null;
+    if (spot) {
+      x = spot.x;
+      y = spot.y;
+    } else {
       x = SPAWN_SUB.x;
       y = SPAWN_SUB.y;
-      hp = def.hp;
+      if (hp <= 0) hp = def.hp;
     }
     const player: Player = {
       id: this.nextId++,
@@ -622,8 +628,10 @@ export class RegionSim {
 
   private applyKnock(body: Player | Monster): void {
     if (body.kbx === 0 && body.kby === 0) return;
-    if (!this.solidAt(tileOf(body.x + body.kbx), tileOf(body.y))) body.x += body.kbx;
-    if (!this.solidAt(tileOf(body.x), tileOf(body.y + body.kby))) body.y += body.kby;
+    // Test the whole body, not just its centre, so a hit can't shove anyone
+    // half into a tree or fence where every move is then blocked.
+    if (!blocked(body.x + body.kbx, body.y, this.solidAt)) body.x += body.kbx;
+    if (!blocked(body.x, body.y + body.kby, this.solidAt)) body.y += body.kby;
     body.kbx = decayKnock(body.kbx);
     body.kby = decayKnock(body.kby);
   }

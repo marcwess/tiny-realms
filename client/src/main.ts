@@ -44,6 +44,13 @@ function show(which: 'auth' | 'char' | 'world'): void {
   authEl.hidden = which !== 'auth';
   charEl.hidden = which !== 'char';
   hudEl.hidden = which !== 'world';
+  if (which !== 'world') {
+    // The in-world menu is a sibling of the HUD, so close it explicitly or it
+    // stays over the login form after "Log out" and swallows every tap.
+    const menu = document.getElementById('menu-pop');
+    if (menu) menu.hidden = true;
+    document.getElementById('btn-menu')?.setAttribute('aria-expanded', 'false');
+  }
   const backdrop = document.getElementById('backdrop');
   if (backdrop) backdrop.hidden = which === 'world';
   const tiny = (window as unknown as { __TINY__?: { screen?: string } }).__TINY__;
@@ -157,6 +164,9 @@ function enterWorld(characterId: number): void {
     socket.close();
   }
   show('world');
+  // Without this the old session keeps ticking and sends its high input seqs
+  // on the new socket before WELCOME, and the server then drops every input.
+  bridge.newSession();
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
   socket = ws;
@@ -451,6 +461,22 @@ async function boot(): Promise<void> {
     scene: [GameScene],
   });
   game.canvas.style.imageRendering = 'pixelated';
+  // Phaser's RESIZE mode can read the parent size before the browser has
+  // applied a rotation, leaving the canvas at the old aspect and stretched by
+  // CSS. Re-fit to the real viewport on the next frame and once more after
+  // iOS settles its bars.
+  const fit = () => {
+    const w = Math.round(window.innerWidth);
+    const h = Math.round(window.innerHeight);
+    if (game.scale.width !== w || game.scale.height !== h) game.scale.resize(w, h);
+  };
+  const refit = () => {
+    requestAnimationFrame(fit);
+    window.setTimeout(fit, 350);
+  };
+  window.addEventListener('resize', refit);
+  window.addEventListener('orientationchange', refit);
+  window.visualViewport?.addEventListener('resize', refit);
   if (import.meta.env.DEV && params.get('bots')) {
     const n = Number(params.get('bots'));
     void fetch(api + '/dev/bots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ n }) });
