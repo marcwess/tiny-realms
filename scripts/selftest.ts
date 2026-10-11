@@ -18,9 +18,7 @@ function assert(cond: unknown, msg: string): void {
 const world = buildWorld();
 const problems = validateWorld(world);
 assert(problems.length === 0, 'world: ' + problems.join('; '));
-let white = 0;
-for (const id of world.tiles) if (id === 60 || id === 61 || id === 62) white++;
-assert(white === 0, 'blank white tiles are not used as flowers');
+assert(world.tiles.length === 128 * 96 && world.objects.length === world.tiles.length, 'world layers');
 
 const png = readFileSync(new URL('../client/public/assets/tilemap_packed.png', import.meta.url));
 assert(png.readUInt32BE(16) === 192 && png.readUInt32BE(20) === 176, 'tilemap_packed is 192x176');

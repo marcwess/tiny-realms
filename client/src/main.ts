@@ -79,7 +79,7 @@ function buildCards(): void {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'class-card' + (c.id === selectedClass ? ' selected' : '');
-    b.innerHTML = `<div class="sprite"></div><div><strong>${c.name}</strong><p class="role">${c.role}</p></div>`;
+    b.innerHTML = `<div class="sprite"></div><div><strong>${c.name}</strong><p class="role">${c.role}</p><div class="bars"><div class="bar hp"><span style="width:${Math.round((c.hp / 140) * 100)}%"></span></div><div class="bar dmg"><span style="width:${Math.round((c.dmg / 18) * 100)}%"></span></div><div class="bar range"><span style="width:${Math.min(100, Math.round(c.range / 22))}%"></span></div></div></div>`;
     const sp = b.querySelector('.sprite') as HTMLElement;
     const bg = spriteStyle(c.tile).split(' ');
     sp.style.backgroundImage = bg[0];
@@ -319,14 +319,30 @@ function drawHeart(): void {
 }
 
 bridge.onHud = (s: HudState) => {
-  paintText('hud-name', `${s.name || 'Hero'}  ${s.className}  Lv ${s.level}`, '#f3e6d0', 2);
+  paintText('hud-name', `${s.name || 'Hero'}  Lv ${s.level}`, '#ffd56a', 2);
   const fill = document.getElementById('hp-fill') as HTMLElement;
   fill.style.width = Math.max(0, Math.min(100, (s.hp / Math.max(1, s.hpMax)) * 100)) + '%';
-  paintText('hud-hp', `${s.hp} / ${s.hpMax}`, '#f3e6d0', 2);
-  paintText('hud-online', `Online ${s.online}`, '#f3e6d0', 2);
-  const zoneLabel = s.zone === 'pvp' ? 'PvP' : s.zone === 'safe' ? 'Town' : 'Wilds';
-  const zoneColor = s.zone === 'pvp' ? '#e05a4f' : s.zone === 'safe' ? '#9ddec0' : '#e2a15a';
-  paintText('hud-zone', zoneLabel, zoneColor, 2);
+  const xp = document.getElementById('xp-fill') as HTMLElement;
+  xp.style.width = Math.max(4, Math.min(100, s.xp % 100)) + '%';
+  paintText('hud-hp', `${s.hp} / ${s.hpMax}`, '#f4efe4', 2);
+  paintText('hud-online', `Online ${s.online}`, '#f4efe4', 1);
+  const zoneColor = s.zone === 'pvp' ? '#ffb0a4' : s.zone === 'safe' ? '#d8f0c4' : '#ffe0a8';
+  paintText('hud-zone', s.zoneName || 'Wilds', zoneColor, 2);
+  const portrait = document.getElementById('portrait') as HTMLElement;
+  const cls = CLASSES.find((c) => c.name === s.className);
+  if (cls && portrait.dataset.tile !== String(cls.tile)) {
+    const scale = 2;
+    const base = import.meta.env.BASE_URL;
+    portrait.style.backgroundImage = `url("${base}assets/tilemap_packed.png")`;
+    portrait.style.backgroundSize = `${192 * scale}px ${176 * scale}px`;
+    portrait.style.backgroundPosition = `${-(cls.tile % 12) * 16 * scale}px ${-Math.floor(cls.tile / 12) * 16 * scale}px`;
+    portrait.dataset.tile = String(cls.tile);
+  }
+  const icon = document.getElementById('attack-icon') as HTMLImageElement | null;
+  if (icon) {
+    const file = s.className === 'Archer' ? 'icon_arrow.png' : s.className === 'Mage' ? 'icon_fire.png' : 'icon_sword.png';
+    if (!icon.src.endsWith(file)) icon.src = import.meta.env.BASE_URL + 'assets/ui/' + file;
+  }
   const ring = document.getElementById('skill-ring') as SVGCircleElement | null;
   if (ring) {
     const left = s.skillMax > 0 ? s.skillCd / s.skillMax : 0;
@@ -377,6 +393,20 @@ async function boot(): Promise<void> {
     const open = menuPop.hidden;
     menuPop.hidden = !open;
     menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  const modal = document.getElementById('modal')!;
+  const modalBody = document.getElementById('modal-body')!;
+  const openModal = (text: string) => {
+    modalBody.textContent = text;
+    modal.hidden = false;
+    menuPop.hidden = true;
+  };
+  document.getElementById('btn-credits')!.onclick = () =>
+    openModal('Kenney Tiny Town, Tiny Dungeon, Pixel Adventure UI, Mobile Controls, and Kenney fonts (CC0). Pixel effects: Super Pixel Effects Gigapack - Will Tice / unTied Games.');
+  document.getElementById('btn-settings')!.onclick = () =>
+    openModal('Move with the stick or WASD. Attack and skill are the two buttons on the right. Space attacks, F uses the skill.');
+  document.getElementById('modal-close')!.onclick = () => {
+    modal.hidden = true;
   };
   bindJoystick();
   bindHold(

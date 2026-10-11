@@ -246,18 +246,26 @@ export function decodeRegions(buf: Uint8Array): RegionsMsg | null {
   return { regions, entrances };
 }
 
-export function encodeChunk(cx: number, cy: number, tiles: Uint8Array): Uint8Array {
-  const b = new Uint8Array(3 + CHUNK * CHUNK);
+const CHUNK_CELLS = CHUNK * CHUNK;
+
+export function encodeChunk(cx: number, cy: number, ground: Uint8Array, object: Uint8Array): Uint8Array {
+  const b = new Uint8Array(3 + CHUNK_CELLS * 2);
   b[0] = MSG.CHUNK;
   b[1] = cx;
   b[2] = cy;
-  b.set(tiles.subarray(0, CHUNK * CHUNK), 3);
+  b.set(ground.subarray(0, CHUNK_CELLS), 3);
+  b.set(object.subarray(0, CHUNK_CELLS), 3 + CHUNK_CELLS);
   return b;
 }
 
-export function decodeChunk(buf: Uint8Array): { cx: number; cy: number; tiles: Uint8Array } | null {
-  if (buf.length < 3 + CHUNK * CHUNK || buf[0] !== MSG.CHUNK) return null;
-  return { cx: buf[1], cy: buf[2], tiles: buf.slice(3, 3 + CHUNK * CHUNK) };
+export function decodeChunk(buf: Uint8Array): { cx: number; cy: number; ground: Uint8Array; object: Uint8Array } | null {
+  if (buf.length < 3 + CHUNK_CELLS * 2 || buf[0] !== MSG.CHUNK) return null;
+  return {
+    cx: buf[1],
+    cy: buf[2],
+    ground: buf.slice(3, 3 + CHUNK_CELLS),
+    object: buf.slice(3 + CHUNK_CELLS, 3 + CHUNK_CELLS * 2),
+  };
 }
 
 export function encodeUnchunk(cx: number, cy: number): Uint8Array {

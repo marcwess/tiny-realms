@@ -9,7 +9,7 @@
   --hp-bg: #3a201c;
   --accent: #e2a15a;
   --pvp: #e05a4f;
-  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+  font-family: "Kenney Mini", "Kenney Square", ui-sans-serif, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -65,18 +65,54 @@ button:active { transform: translateY(1px); }
   z-index: 5;
   overflow: auto;
   padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
-  background: rgba(18, 10, 12, 0.92);
+  background: #7eb6d6;
   touch-action: pan-y;
 }
+.sky, .title-far, .title-near {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  image-rendering: pixelated;
+  background-repeat: repeat-x;
+}
+.sky { top: 0; height: 46%; background: linear-gradient(#8ec8ea, #d7e7a4); }
+.title-far {
+  top: 18%;
+  height: 42%;
+  background: url("/tiny-realms/assets/title-far.png") center / auto 100%;
+  opacity: 0.95;
+  animation: drift 48s linear infinite;
+}
+.title-near {
+  top: 38%;
+  bottom: 0;
+  background: url("/tiny-realms/assets/title-bg.png") center bottom / cover no-repeat;
+}
+@keyframes drift {
+  from { background-position: 0 center; }
+  to { background-position: -780px center; }
+}
 .panel {
+  position: relative;
   max-width: 440px;
-  margin: 0 auto;
-  background: var(--panel);
-  border: 3px solid #4a332c;
-  padding: 20px 16px 16px;
+  margin: 8vh auto 0;
+  background: #3a261c;
+  border: 4px solid #1a100c;
+  box-shadow: 0 0 0 4px #e6c48a, inset 0 0 0 4px #6b4030;
+  padding: 18px 16px 14px;
+}
+.logo {
+  font-family: "Kenney Square", "Kenney Mini", sans-serif;
+  font-size: 28px;
+  line-height: 1.1;
+  color: #ffe7b0;
+  text-shadow: 3px 3px 0 #3a2014;
+  margin: 0 0 8px;
 }
 .panel.wide { max-width: 560px; }
-h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: 1px; }
+h1, h2, button, .logo, .role, .credits, label { font-family: "Kenney Mini", sans-serif; }
+h1 { font-size: 22px; margin: 0 0 8px; letter-spacing: 0; }
 h2 { font-size: 16px; margin: 18px 0 8px; color: var(--accent); }
 .eyebrow, .lede, .credits { color: var(--muted); }
 .lede { margin-top: 0; }
@@ -93,17 +129,33 @@ label { display: block; margin: 12px 0; color: var(--muted); }
   align-items: center;
   text-align: left;
   width: 100%;
-  background: #241714;
+  background: #2a1a14;
+  border: 4px solid #1a100c;
+  box-shadow: inset 0 0 0 2px #6b4030;
 }
-.class-card.selected, .hero-card.selected { border-color: var(--accent); background: #3a241c; }
+.class-card.selected, .hero-card.selected {
+  border-color: #e6c48a;
+  box-shadow: 0 0 0 2px #e6c48a, inset 0 0 0 2px #6b4030;
+  background: #4a2c1c;
+}
 .sprite {
   width: 80px;
   height: 80px;
   flex: 0 0 80px;
   image-rendering: pixelated;
   background-repeat: no-repeat;
+  animation: idle 0.7s steps(2, end) infinite;
 }
-.role { color: var(--muted); font-size: 14px; margin: 4px 0 0; }
+@keyframes idle {
+  50% { transform: translateY(-3px); }
+}
+.bars { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.bar { height: 8px; background: #1a100c; border: 2px solid #6b4030; }
+.bar > span { display: block; height: 100%; }
+.bar.hp > span { background: #e25a4a; }
+.bar.dmg > span { background: #e2a15a; }
+.bar.range > span { background: #7eb6ff; }
+.role { color: var(--muted); font-size: 13px; margin: 4px 0 0; line-height: 1.3; }
 #hud { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
 #top {
   display: flex;
@@ -118,54 +170,141 @@ label { display: block; margin: 12px 0; color: var(--muted); }
 /* Text canvases keep their pixel size; a stretched flex item scales the glyphs. */
 #hud-name, #hud-hp { align-self: flex-start; }
 #hud-heart { width: 28px; height: 24px; flex: 0 0 auto; }
-#hp {
-  width: min(42vw, 180px);
-  height: 12px;
-  background: var(--hp-bg);
-  border: 2px solid #1a100e;
-  box-shadow: 0 0 0 1px #c4a070;
+#vitals {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: flex-start;
+  background: #2a1a14;
+  border: 4px solid #1a100c;
+  box-shadow: 0 0 0 2px #e6c48a;
+  padding: 6px;
 }
-#hp-fill { height: 100%; width: 100%; background: linear-gradient(#e07060, var(--hp)); }
-#minimap {
-  width: 128px;
-  height: 96px;
+#portrait {
+  width: 36px;
+  height: 36px;
   image-rendering: pixelated;
-  background: #1a1214;
-  border: 2px solid #c4a070;
+  background: #1a100c;
+  border: 2px solid #e6c48a;
+  flex: 0 0 36px;
 }
-#btn-menu, #btn-logout { pointer-events: auto; }
+#vital-text { display: flex; flex-direction: column; gap: 3px; }
+#hp {
+  width: min(42vw, 160px);
+  height: 10px;
+  background: #1a100c;
+  border: 2px solid #6b4030;
+}
+#hp-fill { height: 100%; width: 100%; background: #e25a4a; }
+#xp {
+  width: min(42vw, 160px);
+  height: 6px;
+  background: #1a100c;
+  border: 2px solid #3d3428;
+}
+#xp-fill { height: 100%; width: 0%; background: #7eb86a; }
+#map-frame {
+  background: #2a1a14;
+  border: 4px solid #1a100c;
+  box-shadow: 0 0 0 2px #e6c48a;
+  padding: 3px;
+}
+#minimap {
+  width: 112px;
+  height: 84px;
+  image-rendering: pixelated;
+  background: #1d3a28;
+  display: block;
+}
 #btn-menu {
-  min-height: 36px;
-  min-width: 72px;
-  padding: 4px 10px;
-  font-family: Georgia, serif;
-  font-size: 14px;
-  letter-spacing: 1px;
-  background: #2a1c1a;
-  border-color: #c4a070;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: #2a1a14 url("/tiny-realms/assets/ui/icon_menu.png") center / 28px 28px no-repeat;
+  border: 3px solid #e6c48a;
+  pointer-events: auto;
 }
 #menu-pop {
   position: absolute;
   top: 100%;
   right: 0;
-  margin-top: 4px;
-  background: #2a1c1a;
-  border: 2px solid #c4a070;
+  margin-top: 6px;
+  background: #2a1a14;
+  border: 4px solid #1a100c;
+  box-shadow: 0 0 0 2px #e6c48a;
   padding: 8px;
   z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
 }
-#btn-logout { min-height: 44px; padding: 8px 12px; font-family: Georgia, serif; font-size: 16px; }
+#menu-pop button, #btn-logout {
+  min-height: 44px;
+  font-size: 14px;
+  pointer-events: auto;
+}
 #banner {
   position: absolute;
   left: 50%;
-  top: 18%;
+  top: 16%;
   transform: translateX(-50%);
-  background: #1a0808;
-  border: 3px solid var(--pvp);
-  padding: 10px 14px;
-  text-align: center;
-  max-width: 92vw;
+  background: #2a120e;
+  border: 4px solid #1a100c;
+  box-shadow: 0 0 0 2px #e05a4f;
+  padding: 8px 12px;
+  animation: slidein 0.35s steps(6, end);
 }
+@keyframes slidein {
+  from { transform: translateX(-50%) translateY(-24px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+#joy-base {
+  width: 112px;
+  height: 112px;
+  margin-left: -56px;
+  margin-top: -56px;
+  background: url("/tiny-realms/assets/ui/joy-pad.png") center / 112px 112px no-repeat;
+  border: 0;
+}
+#joy-knob {
+  width: 56px;
+  height: 56px;
+  margin-left: -28px;
+  margin-top: -28px;
+  background: url("/tiny-realms/assets/ui/joy-nub.png") center / 56px 56px no-repeat;
+}
+#btn-attack, #btn-skill {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  position: relative;
+  background: url("/tiny-realms/assets/ui/button-circle.png") center / 100% 100% no-repeat;
+  pointer-events: auto;
+  touch-action: none;
+  position: relative;
+}
+#btn-attack { width: 84px; height: 84px; }
+#btn-skill { width: 68px; height: 68px; }
+#btn-attack img, #btn-skill img {
+  width: 46%;
+  height: 46%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+#modal {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  background: rgba(12, 8, 8, 0.55);
+  padding: 16px;
+}
+#modal[hidden] { display: none; }
+#modal .panel { margin: 0; max-width: 360px; }
 #dead {
   position: absolute;
   left: 50%;
@@ -186,23 +325,20 @@ label { display: block; margin: 12px 0; color: var(--muted); }
 }
 #joy-base, #joy-knob {
   position: absolute;
-  border-radius: 50%;
   pointer-events: none;
+  image-rendering: pixelated;
 }
 #joy-base {
   width: 112px;
   height: 112px;
   margin-left: -56px;
   margin-top: -56px;
-  background: rgba(243, 230, 208, 0.16);
-  border: 2px solid rgba(243, 230, 208, 0.7);
 }
 #joy-knob {
   width: 56px;
   height: 56px;
   margin-left: -28px;
   margin-top: -28px;
-  background: rgba(226, 161, 90, 0.9);
 }
 #actions {
   position: absolute;
@@ -215,23 +351,8 @@ label { display: block; margin: 12px 0; color: var(--muted); }
   pointer-events: auto;
 }
 #btn-attack, #btn-skill {
-  border-radius: 50%;
   pointer-events: auto;
   touch-action: none;
-}
-#btn-attack {
-  width: 84px;
-  height: 84px;
-  background: #8d2f28;
-  border-color: #f0c2a0;
-  font-weight: 700;
-}
-#btn-skill {
-  width: 68px;
-  height: 68px;
-  position: relative;
-  background: #24324a;
-  border-color: #9eb4d4;
 }
 #btn-skill svg {
   position: absolute;

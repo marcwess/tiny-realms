@@ -1,9 +1,33 @@
+import { CHUNK, WORLD_H, WORLD_W } from './constants.ts';
 import {
-  CHUNK,
-  WORLD_H,
-  WORLD_W,
+  BANNER,
+  BUSH,
+  CAMPFIRE,
+  DUNGEON,
+  DOOR,
+  FENCE,
+  FENCE_L,
+  FENCE_R,
+  FLOWER_GRASS,
+  GRASS,
+  GRASS_B,
+  HOUSE_EAVE,
+  HOUSE_ROOF,
+  HOUSE_WALL,
+  MUSHROOM,
+  STALL,
+  PEBBLE,
+  POST,
+  RED_BUSH,
+  ROCK,
+  SIGN,
+  TREE,
+  TREE_ROUND,
+  TREE_SMALL,
+  TREE_TRUNK,
+  WELL,
   tileIsSolid,
-} from './constants.ts';
+} from './tiles.ts';
 import { CRYPT_STAIRS, PVP_PIT, SPAWN_TILE, TOWN, zoneAtTile } from './zones.ts';
 
 export interface MonsterSpawn {
@@ -14,64 +38,298 @@ export interface MonsterSpawn {
 
 export interface WorldData {
   tiles: Uint8Array;
+  objects: Uint8Array;
   solid: Uint8Array;
   spawns: MonsterSpawn[];
 }
 
-const FLOOR_OUT = 48;
-// Frame ids in tilemap_packed.png (12 columns). Frames 1-3, 13-15 and 25-27 are
-// the outline pieces of a brick block, not a ring wall, so walls use the full
-// brick frame 40 and doors are plain openings.
-const FLOOR_IN = 0;
-const FLOOR_HOUSE = 48;
-const ROAD = 0;
-const DOOR = 0;
-const WALL = 40;
-const ROCK = 42;
-const RUBBLE = 24;
-const FENCE_H = 77;
-const FENCE_V = 81;
-const STAIRS = 56;
-const BANNER = 29;
+const FLOOR_D = DUNGEON + 0;
+const FLOOR_D2 = DUNGEON + 1;
+const WALL_D = DUNGEON + 40;
+const STAIRS = DUNGEON + 56;
+const BANNER_D = DUNGEON + 29;
+
+const TREES = [TREE, TREE_TRUNK, TREE_SMALL, TREE_ROUND];
 
 function idx(tx: number, ty: number): number {
   return ty * WORLD_W + tx;
 }
 
+function hash(x: number, y: number): number {
+  return (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) >>> 0;
+}
+
+function key(x: number, y: number): string {
+  return x + ',' + y;
+}
+
 export function buildWorld(): WorldData {
   const tiles = new Uint8Array(WORLD_W * WORLD_H);
-  tiles.fill(FLOOR_OUT);
+  const objects = new Uint8Array(WORLD_W * WORLD_H);
+  tiles.fill(GRASS);
 
-  const paint = (tx: number, ty: number, tile: number) => {
-    if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) return;
-    tiles[idx(tx, ty)] = tile;
+  const path = new Set<string>();
+  const water = new Set<string>();
+
+  const spine: [number, number][] = [];
+  for (let x = 18; x <= 78; x++) spine.push([x, 50]);
+  for (let y = 46; y <= 80; y++) spine.push([50, y]);
+  for (const [x, y] of spine) {
+    path.add(key(x, y));
+    path.add(key(x + 1, y));
+    path.add(key(x - 1, y));
+    path.add(key(x, y + 1));
+    path.add(key(x, y - 1));
+  }
+
+  for (let y = PVP_PIT.y + 1; y < PVP_PIT.y + PVP_PIT.h - 1; y++) {
+    for (let x = PVP_PIT.x + 1; x < PVP_PIT.x + PVP_PIT.w - 1; x++) path.add(key(x, y));
+  }
+
+  for (let y = 8; y <= 88; y++) {
+    for (let x = 28; x <= 32; x++) {
+      if (path.has(key(x, y))) continue;
+      water.add(key(x, y));
+    }
+  }
+  for (let y = 22; y <= 32; y++) {
+    for (let x = 90; x <= 102; x++) {
+      const dx = (x - 96) / 6;
+      const dy = (y - 27) / 5;
+      if (dx * dx + dy * dy > 1) continue;
+      if (path.has(key(x, y))) continue;
+      water.add(key(x, y));
+    }
+  }
+
+  const isPath = (x: number, y: number) => path.has(key(x, y));
+  const isWater = (x: number, y: number) => water.has(key(x, y));
+
+  for (let y = 0; y < WORLD_H; y++) {
+    for (let x = 0; x < WORLD_W; x++) {
+      if (isWater(x, y)) {
+        tiles[idx(x, y)] = waterTile(x, y, isWater);
+        continue;
+      }
+      if (isPath(x, y)) tiles[idx(x, y)] = pathTile(x, y, isPath);
+    }
+  }
+
+  for (let y = 0; y < WORLD_H; y++) {
+    for (let x = 0; x < WORLD_W; x++) {
+      const i = idx(x, y);
+      if (tiles[i] !== GRASS) continue;
+      const h = hash(x, y);
+      const nearWater =
+        isWater(x + 1, y) || isWater(x - 1, y) || isWater(x, y + 1) || isWater(x, y - 1);
+      if (nearWater && h % 3 === 0) tiles[i] = 43;
+      else if (h % 7 === 0) tiles[i] = FLOWER_GRASS;
+      else if (h % 5 === 0) tiles[i] = GRASS_B;
+    }
+  }
+
+  paintCrypt(tiles, objects);
+  paintVillage(tiles, objects);
+  paintPit(objects);
+  paintWilds(tiles, objects, path, water);
+
+  const spawns = nudgeSpawns(tiles, objects, baseSpawns());
+
+  const solid = new Uint8Array(tiles.length);
+  for (let i = 0; i < tiles.length; i++) {
+    solid[i] = tileIsSolid(objects[i]) || tileIsSolid(tiles[i]) ? 1 : 0;
+  }
+  return { tiles, objects, solid, spawns };
+}
+
+function pathTile(x: number, y: number, isPath: (x: number, y: number) => boolean): number {
+  const n = isPath(x, y - 1);
+  const e = isPath(x + 1, y);
+  const s = isPath(x, y + 1);
+  const w = isPath(x - 1, y);
+  if (!n && !w) return 12;
+  if (!n && !e) return 14;
+  if (!s && !w) return 36;
+  if (!s && !e) return 38;
+  if (!n) return 13;
+  if (!s) return 37;
+  if (!w) return 24;
+  if (!e) return 26;
+  if (!isPath(x + 1, y - 1)) return 40;
+  if (!isPath(x - 1, y - 1)) return 39;
+  if (!isPath(x + 1, y + 1)) return 41;
+  if (!isPath(x - 1, y + 1)) return 42;
+  return 25;
+}
+
+function waterTile(x: number, y: number, isWater: (x: number, y: number) => boolean): number {
+  // Shore rim sits on the land side of each tile. 60/62 are the south corners,
+  // 61 is the south edge, 76/79 are the west/east edges. 63 is a boat, not a shore.
+  const n = isWater(x, y - 1);
+  const e = isWater(x + 1, y);
+  const s = isWater(x, y + 1);
+  const w = isWater(x - 1, y);
+  if (!n && !w) return 48;
+  if (!n && !e) return 50;
+  if (!s && !w) return 60;
+  if (!s && !e) return 62;
+  if (!n) return 49;
+  if (!s) return 61;
+  if (!w) return 76;
+  if (!e) return 79;
+  return hash(x, y) % 4 === 0 ? 77 : 126;
+}
+
+function paintCrypt(tiles: Uint8Array, objects: Uint8Array): void {
+  const x0 = 8;
+  const y0 = 44;
+  const w = 14;
+  const h = 12;
+  for (let y = y0; y < y0 + h; y++) {
+    for (let x = x0; x < x0 + w; x++) {
+      const edge = x === x0 || y === y0 || x === x0 + w - 1 || y === y0 + h - 1;
+      const door = x === 21 && y === 50;
+      tiles[idx(x, y)] = edge && !door ? WALL_D : hash(x, y) % 4 === 0 ? FLOOR_D2 : FLOOR_D;
+      objects[idx(x, y)] = 0;
+    }
+  }
+  tiles[idx(CRYPT_STAIRS.x, CRYPT_STAIRS.y)] = STAIRS;
+  objects[idx(15, 48)] = BANNER_D;
+  objects[idx(13, 48)] = BANNER_D;
+}
+
+function paintVillage(tiles: Uint8Array, objects: Uint8Array): void {
+  // Houses sit just off the 3-wide crossroads so a zoom-3 phone sees roofs at spawn.
+  house(objects, 40, 43);
+  house(objects, 46, 43);
+  house(objects, 52, 43);
+  house(objects, 56, 43);
+  house(objects, 40, 53);
+  house(objects, 46, 53);
+  house(objects, 52, 53);
+  house(objects, 56, 53);
+  objects[idx(48, 47)] = WELL;
+  objects[idx(46, 46)] = SIGN;
+  objects[idx(53, 47)] = CAMPFIRE;
+  objects[idx(54, 56)] = CAMPFIRE;
+  objects[idx(48, 46)] = BUSH;
+  objects[idx(52, 46)] = RED_BUSH;
+  objects[idx(54, 48)] = MUSHROOM;
+  objects[idx(45, 42)] = TREE;
+  objects[idx(55, 42)] = TREE_ROUND;
+  objects[idx(44, 56)] = TREE_SMALL;
+  objects[idx(58, 57)] = TREE;
+  stall(objects, 46, 57);
+  objects[idx(47, 58)] = PEBBLE;
+  objects[idx(55, 46)] = FENCE;
+  objects[idx(55, 47)] = POST;
+  for (let y = 42; y <= 58; y++) {
+    for (let x = 41; x <= 59; x++) {
+      const i = idx(x, y);
+      if (tiles[i] !== GRASS && tiles[i] !== GRASS_B) continue;
+      if (objects[i] !== 0) continue;
+      if (hash(x, y) % 4 === 0) tiles[i] = FLOWER_GRASS;
+    }
+  }
+}
+
+function house(objects: Uint8Array, x: number, y: number): void {
+  for (let i = 0; i < 3; i++) {
+    objects[idx(x + i, y)] = HOUSE_ROOF[i];
+    objects[idx(x + i, y + 1)] = HOUSE_EAVE[i];
+    objects[idx(x + i, y + 2)] = HOUSE_WALL[i];
+  }
+}
+
+function stall(objects: Uint8Array, x: number, y: number): void {
+  for (let i = 0; i < 3; i++) objects[idx(x + i, y)] = STALL[i];
+}
+
+function paintPit(objects: Uint8Array): void {
+  const x0 = PVP_PIT.x + 1;
+  const y0 = PVP_PIT.y + 1;
+  const x1 = PVP_PIT.x + PVP_PIT.w - 2;
+  const y1 = PVP_PIT.y + PVP_PIT.h - 2;
+  for (let x = x0; x <= x1; x++) {
+    objects[idx(x, y0)] = x === x0 ? FENCE_L : x === x1 ? FENCE_R : FENCE;
+    objects[idx(x, y1)] = x === x0 ? FENCE_L : x === x1 ? FENCE_R : FENCE;
+  }
+  for (let y = y0 + 1; y < y1; y++) {
+    const gate = y >= 49 && y <= 51;
+    if (!gate) objects[idx(x0, y)] = POST;
+    objects[idx(x1, y)] = POST;
+  }
+  objects[idx(x0 + 2, y0 + 1)] = BANNER;
+  objects[idx(x1 - 2, y0 + 1)] = BANNER;
+  objects[idx(74, 52)] = ROCK;
+  objects[idx(80, 52)] = PEBBLE;
+  objects[idx(76, 54)] = RED_BUSH;
+  objects[idx(74, 48)] = DUNGEON + 61;
+  objects[idx(81, 49)] = DUNGEON + 60;
+  objects[idx(78, 47)] = DUNGEON + 62;
+  objects[idx(82, 53)] = DUNGEON + 61;
+  objects[idx(75, 54)] = DUNGEON + 60;
+  objects[idx(79, 55)] = DUNGEON + 62;
+  objects[idx(74, 55)] = BANNER;
+  objects[idx(82, 55)] = BANNER;
+}
+
+function paintWilds(tiles: Uint8Array, objects: Uint8Array, path: Set<string>, water: Set<string>): void {
+  const spawnAt = new Set(baseSpawns().map((s) => key(s.tx, s.ty)));
+  const blocked = (x: number, y: number) => {
+    if (x < 1 || y < 1 || x >= WORLD_W - 1 || y >= WORLD_H - 1) return true;
+    if (path.has(key(x, y)) || water.has(key(x, y))) return true;
+    if (objects[idx(x, y)] !== 0) return true;
+    if (tiles[idx(x, y)] >= DUNGEON) return true;
+    if (x >= TOWN.x && x < TOWN.x + TOWN.w && y >= TOWN.y && y < TOWN.y + TOWN.h) return true;
+    if (x >= PVP_PIT.x && x < PVP_PIT.x + PVP_PIT.w && y >= PVP_PIT.y && y < PVP_PIT.y + PVP_PIT.h) return true;
+    if (spawnAt.has(key(x, y))) return true;
+    return false;
+  };
+  const nearPath = (x: number, y: number) => {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) if (path.has(key(x + dx, y + dy))) return true;
+    }
+    return false;
   };
 
-  for (let x = 0; x < WORLD_W; x++) {
-    paint(x, 0, WALL);
-    paint(x, WORLD_H - 1, WALL);
+  for (let y = 0; y < WORLD_H; y++) {
+    for (let x = 0; x < WORLD_W; x++) {
+      const border = x <= 2 || y <= 2 || x >= WORLD_W - 3 || y >= WORLD_H - 3;
+      if (border) {
+        if (!path.has(key(x, y)) && tiles[idx(x, y)] < DUNGEON) objects[idx(x, y)] = hash(x, y) % 3 === 0 ? TREE_TRUNK : TREE;
+        continue;
+      }
+      if (blocked(x, y) || nearPath(x, y)) continue;
+      const h = hash(x, y);
+      if (h % 17 === 0) {
+        const clump: [number, number][] = [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [-1, 0],
+          [1, 1],
+          [-1, 1],
+        ];
+        for (const [dx, dy] of clump) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (blocked(nx, ny) || nearPath(nx, ny)) continue;
+          if (dx !== 0 && hash(nx, ny) % 3 === 0) continue;
+          const pick = hash(nx, ny) % 6;
+          objects[idx(nx, ny)] = pick === 0 ? BUSH : pick === 1 ? 22 : TREES[pick % TREES.length];
+        }
+      } else if (h % 29 === 0) {
+        objects[idx(x, y)] = ROCK;
+      } else if (h % 11 === 0) {
+        objects[idx(x, y)] = h % 3 === 0 ? MUSHROOM : h % 2 === 0 ? FLOWER_GRASS : RED_BUSH;
+      }
+    }
   }
-  for (let y = 1; y < WORLD_H - 1; y++) {
-    paint(0, y, WALL);
-    paint(WORLD_W - 1, y, WALL);
-  }
+}
 
-  // Hand-placed ruins, rocks, and a fenced camp. Scatter fills the rest.
-  building(tiles, 22, 14, 12, 9, FLOOR_IN, [{ x: 28, y: 22 }]);
-  building(tiles, 96, 14, 14, 10, FLOOR_IN, [{ x: 96, y: 19 }]);
-  for (let x = 100; x <= 112; x++) paint(x, 78, FENCE_H);
-  for (let y = 74; y <= 77; y++) {
-    paint(100, y, FENCE_V);
-    paint(112, y, FENCE_V);
-  }
-  paint(106, 78, FLOOR_OUT);
-
-  const rocks: [number, number][] = [
-    [18, 30], [19, 30], [34, 28], [88, 30], [110, 36], [18, 78], [30, 84], [90, 86], [116, 64],
-  ];
-  for (const [x, y] of rocks) paint(x, y, ROCK);
-
-  const spawns: MonsterSpawn[] = [
+function baseSpawns(): MonsterSpawn[] {
+  return [
     { monsterId: 0, tx: 50, ty: 64 },
     { monsterId: 0, tx: 44, ty: 70 },
     { monsterId: 0, tx: 58, ty: 68 },
@@ -79,113 +337,44 @@ export function buildWorld(): WorldData {
     { monsterId: 6, tx: 62, ty: 80 },
     { monsterId: 6, tx: 74, ty: 86 },
     { monsterId: 7, tx: 86, ty: 74 },
-    { monsterId: 8, tx: 28, ty: 82 },
+    { monsterId: 8, tx: 22, ty: 70 },
     { monsterId: 4, tx: 96, ty: 50 },
     { monsterId: 4, tx: 108, ty: 42 },
     { monsterId: 6, tx: 114, ty: 56 },
     { monsterId: 2, tx: 104, ty: 70 },
     { monsterId: 2, tx: 116, ty: 84 },
     { monsterId: 1, tx: 18, ty: 18 },
-    { monsterId: 3, tx: 30, ty: 20 },
+    { monsterId: 3, tx: 36, ty: 22 },
     { monsterId: 4, tx: 16, ty: 32 },
     { monsterId: 5, tx: 104, ty: 22 },
     { monsterId: 5, tx: 112, ty: 30 },
     { monsterId: 3, tx: 24, ty: 62 },
-    { monsterId: 6, tx: 34, ty: 36 },
+    { monsterId: 6, tx: 40, ty: 36 },
   ];
-  const spawnAt = new Set(spawns.map((s) => s.tx + ',' + s.ty));
-  scatter(tiles, spawnAt);
-
-  // East-west road through town doors, crypt, and the pit. North-south road out the south gate.
-  for (let x = 22; x <= 69; x++) paint(x, 50, ROAD);
-  for (let y = 60; y <= 74; y++) paint(50, y, ROAD);
-
-  building(tiles, TOWN.x, TOWN.y, TOWN.w, TOWN.h, FLOOR_IN, [
-    { x: 61, y: 50 },
-    { x: 40, y: 50 },
-    { x: 50, y: 59 },
-    { x: 50, y: 42 },
-  ]);
-  building(tiles, 44, 44, 12, 5, FLOOR_HOUSE, [{ x: 50, y: 48 }]);
-  building(tiles, 42, 52, 7, 6, FLOOR_HOUSE, [{ x: 48, y: 54 }]);
-  building(tiles, 53, 52, 7, 6, FLOOR_HOUSE, [{ x: 53, y: 54 }]);
-  paint(46, 46, 75);
-  paint(47, 46, 72);
-  paint(56, 46, 82);
-  paint(44, 54, 74);
-  paint(57, 54, 72);
-  // Square around the crossroads, off the roads so three heroes can stand on y=50.
-  paint(46, 49, 72);
-  paint(54, 49, 82);
-  paint(46, 51, 74);
-  paint(54, 51, 72);
-
-  building(tiles, PVP_PIT.x, PVP_PIT.y, PVP_PIT.w, PVP_PIT.h, FLOOR_IN, [{ x: PVP_PIT.x, y: 50 }], RUBBLE);
-  paint(PVP_PIT.x, 46, BANNER);
-  paint(PVP_PIT.x, 54, BANNER);
-  paint(PVP_PIT.x + PVP_PIT.w - 1, 44, BANNER);
-  paint(PVP_PIT.x + PVP_PIT.w - 1, 57, BANNER);
-
-  building(tiles, 8, 44, 14, 12, FLOOR_IN, [{ x: 21, y: 50 }], RUBBLE);
-  paint(CRYPT_STAIRS.x, CRYPT_STAIRS.y, STAIRS);
-  paint(15, 48, 64);
-
-  const solid = new Uint8Array(tiles.length);
-  for (let i = 0; i < tiles.length; i++) solid[i] = tileIsSolid(tiles[i]) ? 1 : 0;
-
-  return { tiles, solid, spawns };
 }
 
-function building(
-  tiles: Uint8Array,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  floor: number,
-  doors: { x: number; y: number }[],
-  speck = -1,
-): void {
-  for (let ty = y; ty < y + h; ty++) {
-    for (let tx = x; tx < x + w; tx++) {
-      if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) continue;
-      const L = tx === x;
-      const R = tx === x + w - 1;
-      const T = ty === y;
-      const B = ty === y + h - 1;
-      let tile = floor;
-      if (!L && !R && !T && !B && speck >= 0) {
-        const h = (Math.imul(tx, 2246822519) ^ Math.imul(ty, 3266489917)) >>> 0;
-        if (h % 7 === 0) tile = speck;
+function nudgeSpawns(tiles: Uint8Array, objects: Uint8Array, spawns: MonsterSpawn[]): MonsterSpawn[] {
+  return spawns.map((s) => {
+    if (!occupied(tiles, objects, s.tx, s.ty)) return s;
+    for (let r = 1; r <= 6; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const x = s.tx + dx;
+          const y = s.ty + dy;
+          if (occupied(tiles, objects, x, y)) continue;
+          if (zoneAtTile(x, y) === 'safe') continue;
+          return { ...s, tx: x, ty: y };
+        }
       }
-      if (L || R || T || B) tile = WALL;
-      tiles[idx(tx, ty)] = tile;
     }
-  }
-  for (const d of doors) {
-    if (d.x < 0 || d.y < 0 || d.x >= WORLD_W || d.y >= WORLD_H) continue;
-    tiles[idx(d.x, d.y)] = DOOR;
-  }
+    return s;
+  });
 }
 
-function scatter(tiles: Uint8Array, spawnAt: Set<string>): void {
-  for (let y = 2; y < WORLD_H - 2; y++) {
-    for (let x = 2; x < WORLD_W - 2; x++) {
-      if (tiles[idx(x, y)] !== FLOOR_OUT) continue;
-      if (y === 50 && x >= 14 && x <= 90) continue;
-      if (x === 50 && y >= 48 && y <= 78) continue;
-      const h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) >>> 0;
-      // 48 and 49 are the walkable sand. 60/61 are blank white frames, so they stay unused.
-      if (h % 3 === 0) tiles[idx(x, y)] = 49;
-      const around = [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ].every(([dx, dy]) => tiles[idx(x + dx, y + dy)] === FLOOR_OUT || tiles[idx(x + dx, y + dy)] === 49);
-      if (h % 37 === 0 && around && !spawnAt.has(x + ',' + y)) tiles[idx(x, y)] = ROCK;
-    }
-  }
+function occupied(tiles: Uint8Array, objects: Uint8Array, x: number, y: number): boolean {
+  if (x < 1 || y < 1 || x >= WORLD_W - 1 || y >= WORLD_H - 1) return true;
+  return tileIsSolid(objects[idx(x, y)]) || tileIsSolid(tiles[idx(x, y)]);
 }
 
 export function solidAtOf(world: WorldData): (tx: number, ty: number) => boolean {
@@ -195,16 +384,21 @@ export function solidAtOf(world: WorldData): (tx: number, ty: number) => boolean
   };
 }
 
-export function chunkTiles(world: WorldData, cx: number, cy: number): Uint8Array {
-  const out = new Uint8Array(CHUNK * CHUNK);
+export function chunkSlice(world: WorldData, cx: number, cy: number): { ground: Uint8Array; object: Uint8Array } {
+  const ground = new Uint8Array(CHUNK * CHUNK);
+  const object = new Uint8Array(CHUNK * CHUNK);
   const x0 = cx * CHUNK;
   const y0 = cy * CHUNK;
   let o = 0;
   for (let y = 0; y < CHUNK; y++) {
     const row = (y0 + y) * WORLD_W + x0;
-    for (let x = 0; x < CHUNK; x++) out[o++] = world.tiles[row + x];
+    for (let x = 0; x < CHUNK; x++) {
+      ground[o] = world.tiles[row + x];
+      object[o] = world.objects[row + x];
+      o++;
+    }
   }
-  return out;
+  return { ground, object };
 }
 
 export function validateWorld(world: WorldData): string[] {
@@ -223,13 +417,12 @@ export function validateWorld(world: WorldData): string[] {
     const i = idx(x, y);
     if (seen[i]) continue;
     seen[i] = 1;
-    const steps = [
+    for (const [dx, dy] of [
       [1, 0],
       [-1, 0],
       [0, 1],
       [0, -1],
-    ];
-    for (const [dx, dy] of steps) {
+    ]) {
       const nx = x + dx;
       const ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= WORLD_W || ny >= WORLD_H) continue;

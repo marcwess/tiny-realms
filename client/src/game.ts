@@ -15,6 +15,7 @@ import {
   WORLD_W,
   tileIsSolid,
 } from '../../shared/src/constants.ts';
+import { DUNGEON, tileFrame, tileIsTall } from '../../shared/src/tiles.ts';
 import { sampleInterp, type InterpSample } from '../../shared/src/interest.ts';
 import {
   decodeAdd,
@@ -57,6 +58,7 @@ export interface HudState {
   dead: boolean;
   deadIn: number;
   banner: string;
+  xp: number;
 }
 
 interface RegionView {
@@ -73,20 +75,36 @@ interface EntView {
   kind: number;
   subtype: number;
   hp: number;
+  hpMax: number;
   flags: number;
   name: string;
   vx: number;
   vy: number;
   samples: InterpSample[];
   sprite: Phaser.GameObjects.Sprite;
+  shadow: Phaser.GameObjects.Image;
   label?: Phaser.GameObjects.Image;
   bar?: Phaser.GameObjects.Graphics;
+  bang?: Phaser.GameObjects.Image;
+  aggroAt: number;
 }
 
 interface Floater {
   img: Phaser.GameObjects.Image;
   life: number;
+  born: number;
 }
+
+interface ChunkDraw {
+  ground: Phaser.GameObjects.Image;
+  rows: Phaser.GameObjects.Image[];
+  fires: Phaser.GameObjects.Sprite[];
+  roofs: Phaser.GameObjects.Image[];
+}
+
+const WATER_IDS = new Set([48, 49, 50, 60, 61, 62, 76, 77, 79, 126]);
+const ROOF_IDS = new Set([52, 53, 54, 64, 65, 66, 72, 73, 75]);
+const PATH_IDS = new Set([12, 13, 14, 24, 25, 26, 36, 37, 38, 39, 40, 41, 42]);
 
 // Actors sort by y (10 + y, up to ~1550). Overlays must sit above every actor.
 const DEPTH_LABEL = 4000;
@@ -114,15 +132,17 @@ export class GameScene extends Phaser.Scene {
   online = 1;
   attackCd = 0;
   skillCd = 0;
-  zone: HudState['zone'] = 'safe';
+  xp = 0;
+  zone: HudState['zone'] = 'pve';
   zoneName = 'Wilds';
   private acc = 0;
-  private lastZone: HudState['zone'] = 'safe';
+  private lastZone: HudState['zone'] = 'pve';
   private serverTick = 0;
   private serverAt = 0;
   private tileImg: CanvasImageSource | null = null;
-  private chunks = new Map<string, Phaser.GameObjects.Image>();
-  private solids = new Map<string, Uint8Array>();
+  private townImg: CanvasImageSource | null = null;
+  private chunkDraw = new Map<string, ChunkDraw>();
+  private solids = new Map<string, { ground: Uint8Array; object: Uint8Array }>();
   private ents = new Map<number, EntView>();
   private regions: RegionView[] = [];
   private zoneGfx: Phaser.GameObjects.Graphics | null = null;
@@ -132,6 +152,7 @@ export class GameScene extends Phaser.Scene {
   private bannerUntil = 0;
   private deadUntil = 0;
   private minimap: HTMLCanvasElement | null = null;
+  private motes: { img: Phaser.GameObjects.Image; vx: number; vy: number; bob: number }[] = [];
   private frameDts: number[] = [];
   private debug = false;
   private stepDir = 0;
@@ -163,6 +184,12 @@ export class GameScene extends Phaser.Scene {
       spacing: 0,
       margin: 0,
     });
+    this.load.spritesheet('town', base + 'assets/town_packed.png', {
+      frameWidth: 16,
+      frameHeight: 16,
+      spacing: 0,
+      margin: 0,
+    });
     this.load.spritesheet('fx-hit', base + 'assets/fx/hit_yellow.png', { frameWidth: 48, frameHeight: 48 });
     this.load.spritesheet('fx-arrow', base + 'assets/fx/hit_blue.png', { frameWidth: 32, frameHeight: 32 });
     this.load.spritesheet('fx-magic', base + 'assets/fx/magic_blue.png', { frameWidth: 32, frameHeight: 32 });
@@ -173,6 +200,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.tileImg = this.textures.get('tiles').getSourceImage() as CanvasImageSource;
+    this.townImg = this.textures.get('town').getSourceImage() as CanvasImageSource;
     const anim = (key: string, end: number) => {
       this.anims.create({ key, frames: this.anims.generateFrameNumbers(key, { start: 0, end }), frameRate: 15, hideOnComplete: true });
     };
@@ -182,6 +210,19 @@ export class GameScene extends Phaser.Scene {
     anim('fx-fire', 7);
     anim('fx-smoke', 9);
     anim('fx-stun', 7);
+    this.anims.create({
+      key: 'fx-fire-loop',
+      frames: this.anims.generateFrameNumbers('fx-fire', { start: 0, end: 7 }),
+      frameRate: 10,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: 'fx-smoke-loop',
+      frames: this.anims.generateFrameNumbers('fx-smoke', { start: 0, end: 9 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+    this.makeDecorTextures();
     this.makeProjTextures();
     const kb = this.input.keyboard!;
     // No Phaser key capture: it calls preventDefault on window keydown, which
@@ -202,6 +243,7 @@ export class GameScene extends Phaser.Scene {
     this.scale.on('resize', () => this.applyZoom());
     this.applyZoom();
     this.tilesetOk = this.assertTileset();
+    this.spawnMotes();
     this.minimap = document.getElementById('minimap') as HTMLCanvasElement | null;
     this.debug = new URLSearchParams(location.search).has('debug');
     bridge.scene = this;
@@ -238,6 +280,60 @@ export class GameScene extends Phaser.Scene {
     }
     if (!ok) console.error('[tiny] tileset check failed', src.width, src.height);
     return ok;
+  }
+
+  private makeDecorTextures(): void {
+    const paint = (key: string, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const g = c.getContext('2d');
+      if (!g) return;
+      draw(g);
+      this.textures.addCanvas(key, c);
+    };
+    paint('shadow', 12, 6, (g) => {
+      g.fillStyle = 'rgba(20, 28, 16, 0.45)';
+      g.beginPath();
+      g.ellipse(6, 3, 5, 2, 0, 0, Math.PI * 2);
+      g.fill();
+    });
+    paint('leaf', 3, 3, (g) => {
+      g.fillStyle = '#7dba55';
+      g.fillRect(0, 1, 3, 1);
+      g.fillRect(1, 0, 1, 3);
+    });
+    paint('bug', 2, 2, (g) => {
+      g.fillStyle = '#ffe27a';
+      g.fillRect(0, 0, 2, 2);
+    });
+    paint('ripple', 4, 2, (g) => {
+      g.fillStyle = 'rgba(186, 220, 255, 0.85)';
+      g.fillRect(0, 0, 4, 1);
+      g.fillRect(1, 1, 2, 1);
+    });
+  }
+
+  private spawnMotes(): void {
+    for (let i = 0; i < 18; i++) {
+      const bug = i >= 10 && i < 15;
+      const ripple = i >= 15;
+      const key = ripple ? 'ripple' : bug ? 'bug' : 'leaf';
+      const img = this.add.image(0, 0, key).setDepth(2500).setAlpha(ripple ? 0.55 : bug ? 0.9 : 0.8);
+      this.motes.push({ img, vx: ripple ? 4 : bug ? 6 : 10 + (i % 3) * 4, vy: bug ? -4 : ripple ? 3 : 6, bob: i * 40 });
+    }
+  }
+
+  private driftMotes(sx: number, sy: number, vw: number, vh: number, now: number): void {
+    const spanX = vw + 24;
+    const spanY = vh + 24;
+    for (const m of this.motes) {
+      const t = (now + m.bob) / 1000;
+      let x = sx - 12 + ((m.vx * t * 8 + m.bob * 13) % spanX);
+      let y = sy - 12 + ((m.vy * t * 6 + m.bob * 17) % spanY);
+      if (m.vy < 0) y = sy + vh - ((-m.vy * t * 10 + m.bob) % spanY);
+      m.img.setPosition(Math.round(x), Math.round(y + Math.sin(t * 3 + m.bob) * 2));
+    }
   }
 
   private makeProjTextures(): void {
@@ -288,6 +384,7 @@ export class GameScene extends Phaser.Scene {
       this.selfId = w.entityId;
       this.classId = w.classId;
       this.level = w.level;
+      this.xp = w.xp;
       this.hp = w.hp;
       this.hpMax = w.hpMax;
       this.predictor.reset(w.x, w.y, CLASSES[w.classId]?.speed ?? 24);
@@ -306,7 +403,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (t === 8) {
       const c = decodeChunk(buf);
-      if (c) this.addChunk(c.cx, c.cy, c.tiles);
+      if (c) this.addChunk(c.cx, c.cy, c.ground, c.object);
       return;
     }
     if (t === 9 && buf.length >= 3) {
@@ -354,18 +451,22 @@ export class GameScene extends Phaser.Scene {
       if (!evs) return;
       for (const ev of evs) {
         if (ev.ev === EV.DAMAGE) {
-          if (ev.n > 0) this.float(ev.x, ev.y, String(ev.n), '#ffe08a');
-          this.playFx(ev.fx || FX.HIT, ev.x, ev.y);
+          const crit = (ev.fx & 128) !== 0;
+          const fx = ev.fx & 127;
+          if (ev.n > 0) this.float(ev.x, ev.y, String(ev.n), crit ? '#ffe14a' : '#fff1c4');
+          this.playFx(fx || FX.HIT, ev.x, ev.y - 40);
+          if (crit || ev.n >= 14) this.cameras.main.shake(70, 0.0016);
           const target = this.ents.get(ev.a);
           if (target) {
-            target.sprite.setTintFill(0xffffff);
+            target.sprite.setTintFill(0xfff6e8);
             this.time.delayedCall(70, () => target.sprite.clearTint());
           }
         } else if (ev.ev === EV.DEATH) {
           this.playFx(FX.SMOKE, ev.x, ev.y);
           if (ev.a === this.selfId) this.deadUntil = performance.now() + 3000;
         } else if (ev.ev === EV.SWING && ev.a !== this.selfId) {
-          this.playFx(ev.fx || FX.HIT, ev.x, ev.y);
+          const ox = ev.b === 3 ? 140 : ev.b === 7 ? -140 : 0;
+          this.playFx(ev.fx || FX.HIT, ev.x + ox, ev.y);
         } else if (ev.ev === EV.BANNER && ev.n === 3) {
           this.showBanner('The crypt is sealed. Dungeon instances come later.');
         }
@@ -383,9 +484,9 @@ export class GameScene extends Phaser.Scene {
       const y = r.y * TILE;
       const w = r.w * TILE;
       const h = r.h * TILE;
-      g.fillStyle(0xff2a2a, 0.22);
+      g.fillStyle(0xff2a2a, 0.05);
       g.fillRect(x, y, w, h);
-      g.lineStyle(2, 0xff2a2a, 1);
+      g.lineStyle(1, 0xff6a5a, 0.7);
       g.strokeRect(x + 1, y + 1, w - 2, h - 2);
       g.lineStyle(1, 0xffd0c8, 1);
       g.strokeRect(x + 4, y + 4, w - 8, h - 8);
@@ -393,8 +494,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private noteZone(z: HudState['zone']): void {
-    if (z === 'pvp' && this.lastZone !== 'pvp') this.showBanner('Entering PvP zone');
-    if (z !== 'pvp' && this.lastZone === 'pvp') this.showBanner('Leaving PvP zone');
+    if (z !== this.lastZone) {
+      if (z === 'pvp') this.showBanner('Blood Pit - PvP');
+      else if (z === 'safe') this.showBanner('Millcross');
+      else if (this.lastZone === 'safe' || this.lastZone === 'pvp') this.showBanner('Wilds');
+    }
     this.lastZone = z;
     this.zone = z;
     const hit = this.regions.find((r) => r.zone === z && this.tileIn(r));
@@ -412,35 +516,141 @@ export class GameScene extends Phaser.Scene {
     this.bannerUntil = performance.now() + 2400;
   }
 
-  private addChunk(cx: number, cy: number, tiles: Uint8Array): void {
+  private addChunk(cx: number, cy: number, ground: Uint8Array, object: Uint8Array): void {
     const key = cx + ',' + cy;
-    this.solids.set(key, tiles);
-    if (!this.tileImg) return;
+    this.solids.set(key, { ground, object });
+    if (!this.townImg || !this.tileImg) return;
+    const size = CHUNK * TILE;
     const canvas = document.createElement('canvas');
-    canvas.width = CHUNK * TILE;
-    canvas.height = CHUNK * TILE;
+    canvas.width = size;
+    canvas.height = size;
     const g = canvas.getContext('2d');
     if (!g) return;
     g.imageSmoothingEnabled = false;
-    for (let i = 0; i < tiles.length; i++) {
-      const id = tiles[i];
-      const sx = (id % 12) * TILE;
-      const sy = Math.floor(id / 12) * TILE;
-      g.drawImage(this.tileImg, sx, sy, TILE, TILE, (i % CHUNK) * TILE, Math.floor(i / CHUNK) * TILE, TILE, TILE);
+    const rows = new Map<number, HTMLCanvasElement>();
+    const rowCtx = new Map<number, CanvasRenderingContext2D>();
+    const fires: { x: number; y: number }[] = [];
+    const roofCells: { lx: number; ly: number; id: number }[] = [];
+    for (let i = 0; i < ground.length; i++) {
+      const lx = i % CHUNK;
+      const ly = Math.floor(i / CHUNK);
+      const dx = lx * TILE;
+      const dy = ly * TILE;
+      this.blitTile(g, ground[i], dx, dy);
+      const obj = object[i];
+      if (!obj) continue;
+      if (ROOF_IDS.has(obj)) {
+        roofCells.push({ lx, ly, id: obj });
+        g.fillStyle = 'rgba(20, 30, 16, 0.28)';
+        g.beginPath();
+        g.ellipse(dx + 8, dy + 14, 6, 2, 0, 0, Math.PI * 2);
+        g.fill();
+        continue;
+      }
+      if (tileIsTall(obj)) {
+        let rg = rowCtx.get(ly);
+        if (!rg) {
+          const c = document.createElement('canvas');
+          c.width = size;
+          c.height = TILE;
+          const ctx = c.getContext('2d');
+          if (!ctx) continue;
+          ctx.imageSmoothingEnabled = false;
+          rows.set(ly, c);
+          rowCtx.set(ly, ctx);
+          rg = ctx;
+        }
+        g.fillStyle = 'rgba(20, 30, 16, 0.3)';
+        g.beginPath();
+        g.ellipse(dx + 8, dy + 13, 5, 2.2, 0, 0, Math.PI * 2);
+        g.fill();
+        this.blitTile(rg, obj, dx, 0);
+        if (obj === 57) fires.push({ x: cx * size + dx + 8, y: cy * size + dy + 12 });
+      } else {
+        this.blitTile(g, obj, dx, dy);
+      }
     }
+    this.destroyChunk(key);
     if (this.textures.exists('chunk-' + key)) this.textures.remove('chunk-' + key);
     this.textures.addCanvas('chunk-' + key, canvas);
-    const prev = this.chunks.get(key);
-    prev?.destroy();
-    const img = this.add.image(cx * CHUNK * TILE, cy * CHUNK * TILE, 'chunk-' + key).setOrigin(0, 0).setDepth(0);
-    this.chunks.set(key, img);
+    const img = this.add.image(cx * size, cy * size, 'chunk-' + key).setOrigin(0, 0).setDepth(0);
+    const rowImages: Phaser.GameObjects.Image[] = [];
+    for (const [ly, c] of rows) {
+      const name = 'chunkrow-' + key + '-' + ly;
+      if (this.textures.exists(name)) this.textures.remove(name);
+      this.textures.addCanvas(name, c);
+      const bottom = (cy * CHUNK + ly + 1) * TILE;
+      rowImages.push(this.add.image(cx * size, (cy * CHUNK + ly) * TILE, name).setOrigin(0, 0).setDepth(bottom));
+    }
+    const roofImages: Phaser.GameObjects.Image[] = [];
+    for (const r of roofCells) {
+      const ty = cy * CHUNK + r.ly;
+      const img = this.add
+        .image(cx * size + r.lx * TILE, ty * TILE, 'town', tileFrame(r.id))
+        .setOrigin(0, 0)
+        .setDepth((ty + 2) * TILE - 1);
+      roofImages.push(img);
+    }
+    const fireSprites: Phaser.GameObjects.Sprite[] = [];
+    for (const f of fires) {
+      const flame = this.add.sprite(f.x, f.y, 'fx-fire').setDepth(f.y).setScale(0.45).setOrigin(0.5, 0.8);
+      flame.play('fx-fire-loop');
+      const smoke = this.add.sprite(f.x, f.y - 10, 'fx-smoke').setDepth(f.y).setScale(0.4).setOrigin(0.5, 1).setAlpha(0.75);
+      smoke.play('fx-smoke-loop');
+      fireSprites.push(flame, smoke);
+    }
+    this.chunkDraw.set(key, { ground: img, rows: rowImages, fires: fireSprites, roofs: roofImages });
     this.drawMinimap();
+  }
+
+  private blitTile(g: CanvasRenderingContext2D, id: number, dx: number, dy: number): void {
+    const sheet = id >= DUNGEON ? this.tileImg : this.townImg;
+    if (!sheet) return;
+    const frame = tileFrame(id);
+    const sx = (frame % 12) * TILE;
+    const sy = Math.floor(frame / 12) * TILE;
+    if (WATER_IDS.has(id)) {
+      const scratch = this.scratch();
+      const sg = scratch.getContext('2d')!;
+      sg.clearRect(0, 0, TILE, TILE);
+      sg.drawImage(sheet, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
+      sg.globalCompositeOperation = 'source-atop';
+      sg.fillStyle = 'rgba(24, 118, 214, 0.55)';
+      sg.fillRect(0, 0, TILE, TILE);
+      sg.globalCompositeOperation = 'source-over';
+      g.drawImage(scratch, dx, dy);
+      return;
+    }
+    g.drawImage(sheet, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+  }
+
+  private scratchCanvas: HTMLCanvasElement | null = null;
+  private scratch(): HTMLCanvasElement {
+    if (!this.scratchCanvas) {
+      this.scratchCanvas = document.createElement('canvas');
+      this.scratchCanvas.width = TILE;
+      this.scratchCanvas.height = TILE;
+    }
+    return this.scratchCanvas;
+  }
+
+  private destroyChunk(key: string): void {
+    const prev = this.chunkDraw.get(key);
+    if (!prev) return;
+    prev.ground.destroy();
+    for (const row of prev.rows) {
+      const name = row.texture.key;
+      row.destroy();
+      if (this.textures.exists(name)) this.textures.remove(name);
+    }
+    for (const fire of prev.fires) fire.destroy();
+    for (const roof of prev.roofs) roof.destroy();
+    this.chunkDraw.delete(key);
   }
 
   private removeChunk(cx: number, cy: number): void {
     const key = cx + ',' + cy;
-    this.chunks.get(key)?.destroy();
-    this.chunks.delete(key);
+    this.destroyChunk(key);
     this.solids.delete(key);
     if (this.textures.exists('chunk-' + key)) this.textures.remove('chunk-' + key);
     this.drawMinimap();
@@ -450,18 +660,21 @@ export class GameScene extends Phaser.Scene {
     if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) return true;
     const cx = Math.floor(tx / CHUNK);
     const cy = Math.floor(ty / CHUNK);
-    const tiles = this.solids.get(cx + ',' + cy);
-    if (!tiles) return true;
+    const cell = this.solids.get(cx + ',' + cy);
+    if (!cell) return true;
     const lx = tx - cx * CHUNK;
     const ly = ty - cy * CHUNK;
-    return tileIsSolid(tiles[ly * CHUNK + lx]);
+    const i = ly * CHUNK + lx;
+    return tileIsSolid(cell.object[i]) || tileIsSolid(cell.ground[i]);
   }
 
   private addEnt(a: AddEnt): void {
+    const created = !this.ents.has(a.id);
     this.ensureEnt(a.id, a.kind, a.subtype, a.hp, a.flags, a.name);
     const view = this.ents.get(a.id);
     if (!view) return;
     view.samples.push({ t: this.serverTick * TICK_MS, x: a.x, y: a.y });
+    if (created && a.kind === KIND.PLAYER) this.playFx(FX.MAGIC, a.x, a.y - 20);
   }
 
   private ensureEnt(id: number, kind: number, subtype: number, hp: number, flags: number, name: string): void {
@@ -470,10 +683,12 @@ export class GameScene extends Phaser.Scene {
       const frame = kind === KIND.PLAYER ? CLASSES[subtype]?.tile ?? 96 : kind === KIND.MONSTER ? MONSTERS[subtype]?.tile ?? 108 : 0;
       const key = kind === KIND.PROJECTILE ? (subtype === 2 ? 'fireball' : subtype === 1 ? 'orb' : 'arrow0') : 'tiles';
       const sprite = (kind === KIND.PROJECTILE ? this.add.sprite(0, 0, key) : this.add.sprite(0, 0, key, frame)).setDepth(2);
-      sprite.setOrigin(0.5, 0.5);
+      sprite.setOrigin(0.5, kind === KIND.PROJECTILE ? 0.5 : 0.85);
       if (sprite.texture.key === '__MISSING' || String(sprite.frame?.name) === '__MISSING') this.missing++;
-      view = { id, kind, subtype, hp, flags, name, vx: 0, vy: 0, samples: [], sprite };
-      if (kind === KIND.MONSTER) view.bar = this.add.graphics().setDepth(DEPTH_LABEL);
+      const shadow = this.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5);
+      const hpMax = kind === KIND.PLAYER ? CLASSES[subtype]?.hp ?? 1 : kind === KIND.MONSTER ? MONSTERS[subtype]?.hp ?? 1 : 1;
+      view = { id, kind, subtype, hp, hpMax, flags, name, vx: 0, vy: 0, samples: [], sprite, shadow, aggroAt: 0 };
+      if (kind === KIND.MONSTER || kind === KIND.PLAYER) view.bar = this.add.graphics().setDepth(DEPTH_LABEL);
       this.ents.set(id, view);
     }
     view.kind = kind;
@@ -482,7 +697,7 @@ export class GameScene extends Phaser.Scene {
     view.flags = flags;
     if (name) view.name = name;
     if (kind === KIND.PLAYER && view.name && !view.label) {
-      const color = subtype === 0 ? '#d5deea' : subtype === 1 ? '#b6e39a' : '#e0c6ff';
+      const color = id === this.selfId ? '#ffd56a' : '#f4efe4';
       const tex = 'name-' + view.name + '-' + subtype;
       if (!this.textures.exists(tex)) this.textures.addCanvas(tex, textCanvas(view.name, color, 1));
       view.label = this.add.image(0, 0, tex).setDepth(DEPTH_LABEL).setOrigin(0.5, 1);
@@ -493,15 +708,18 @@ export class GameScene extends Phaser.Scene {
     const view = this.ents.get(id);
     if (!view || id === this.selfId) return;
     view.sprite.destroy();
+    view.shadow.destroy();
     view.label?.destroy();
     view.bar?.destroy();
+    view.bang?.destroy();
     this.ents.delete(id);
   }
 
   private playFx(fx: number, x: number, y: number): void {
     const key =
       fx === FX.ARROW ? 'fx-arrow' : fx === FX.MAGIC ? 'fx-magic' : fx === FX.FIRE ? 'fx-fire' : fx === FX.SMOKE ? 'fx-smoke' : fx === FX.STUN ? 'fx-stun' : 'fx-hit';
-    const s = this.add.sprite(x / SUB, y / SUB, key).setDepth(DEPTH_FX).setOrigin(0.5, 0.5);
+    const s = this.add.sprite(x / SUB, y / SUB - 4, key).setDepth(DEPTH_FX).setOrigin(0.5, 0.7);
+    s.setScale(key === 'fx-hit' ? 0.5 : 0.62);
     s.play(key);
     s.once('animationcomplete', () => s.destroy());
   }
@@ -509,8 +727,8 @@ export class GameScene extends Phaser.Scene {
   private float(x: number, y: number, text: string, color: string): void {
     const tex = 'dmg-' + text + color;
     if (!this.textures.exists(tex)) this.textures.addCanvas(tex, textCanvas(text, color, 2));
-    const img = this.add.image(x / SUB, y / SUB - 10, tex).setDepth(DEPTH_FLOAT).setOrigin(0.5, 1);
-    this.floaters.push({ img, life: 700 });
+    const img = this.add.image(x / SUB, y / SUB - 14, tex).setDepth(DEPTH_FLOAT).setOrigin(0.5, 1);
+    this.floaters.push({ img, life: 780, born: performance.now() });
   }
 
   update(_time: number, delta: number): void {
@@ -587,33 +805,73 @@ export class GameScene extends Phaser.Scene {
       }
       const dead = (view.flags & FLAG.Dead) !== 0;
       view.sprite.setVisible(!dead);
+      view.shadow.setVisible(!dead && view.kind !== KIND.PROJECTILE);
       view.label?.setVisible(!dead && view.kind === KIND.PLAYER);
       const moving = view.id === this.selfId ? bob !== 0 : (view.flags & FLAG.Moving) !== 0;
-      const oy = moving && Math.floor(now / 140) % 2 === 0 ? -1 : 0;
-      view.sprite.setPosition(Math.round(x), Math.round(y + oy));
-      view.sprite.setDepth(10 + y);
-      if (view.label) view.label.setPosition(Math.round(x), Math.round(y) - 10);
+      const step = Math.floor(now / 140) % 2 === 0;
+      let oy = 0;
+      if (moving && step) oy = -1;
+      else if (!moving && view.kind === KIND.MONSTER && Math.floor(now / 280) % 2 === 0) oy = -1;
+      const px = Math.round(x);
+      const py = Math.round(y + oy);
+      view.sprite.setPosition(px, py);
+      if (view.kind !== KIND.PROJECTILE) {
+        if (moving) view.sprite.setDisplaySize(step ? 15 : 16, step ? 16 : 15);
+        else view.sprite.setDisplaySize(16, 16);
+      }
+      view.sprite.setDepth(py);
+      view.shadow.setPosition(px, Math.round(y) + 2);
+      view.shadow.setDepth(py - 1);
+      if (view.label) view.label.setPosition(px, py - 12);
+      const aggro = view.kind === KIND.MONSTER && (view.flags & FLAG.Aggro) !== 0 && !dead;
+      if (aggro && view.aggroAt === 0) view.aggroAt = now;
+      if (!aggro) view.aggroAt = 0;
+      if (aggro) {
+        if (!view.bang) {
+          if (!this.textures.exists('bang')) this.textures.addCanvas('bang', textCanvas('!', '#ffe14a', 2));
+          view.bang = this.add.image(0, 0, 'bang').setDepth(DEPTH_LABEL).setOrigin(0.5, 1);
+        }
+        const pop = Math.min(1, (now - view.aggroAt) / 140);
+        view.bang.setVisible(true).setPosition(px, py - 18).setScale(0.6 + pop * 0.4);
+      } else view.bang?.setVisible(false);
       if (view.bar) {
         view.bar.clear();
-        if (!dead && view.kind === KIND.MONSTER) {
-          const max = MONSTERS[view.subtype]?.hp ?? 1;
-          view.bar.fillStyle(0x000000, 0.8);
-          view.bar.fillRect(Math.round(x) - 7, Math.round(y) - 12, 14, 3);
-          view.bar.fillStyle(0xd4533c, 1);
-          view.bar.fillRect(Math.round(x) - 7, Math.round(y) - 12, Math.round(14 * Math.max(0, view.hp) / max), 3);
+        const max = view.hpMax || 1;
+        if (!dead && view.hp < max && view.kind !== KIND.PROJECTILE) {
+          view.bar.fillStyle(0x1a100e, 0.9);
+          view.bar.fillRect(px - 7, py - 16, 14, 3);
+          view.bar.fillStyle(0xe25a4a, 1);
+          view.bar.fillRect(px - 7, py - 16, Math.max(0, Math.round((14 * view.hp) / max)), 3);
         }
       }
+    }
+    const labels = [...this.ents.values()].filter((v) => v.label?.visible);
+    labels.sort((a, b) => a.sprite.y - b.sprite.y);
+    for (let i = 1; i < labels.length; i++) {
+      const prev = labels[i - 1].label!;
+      const cur = labels[i].label!;
+      if (Math.abs(cur.x - prev.x) < 28 && Math.abs(cur.y - prev.y) < 8) cur.y = prev.y - 8;
     }
     const cam = this.cameras.main;
     const z = cam.zoom || 1;
     const viewX = rx / SUB;
     const viewY = ry / SUB;
     cam.setScroll(Math.round(viewX - cam.width / z / 2), Math.round(viewY - cam.height / z / 2));
+    for (const chunk of this.chunkDraw.values()) {
+      for (const roof of chunk.roofs) {
+        const behind = viewY < roof.y - 2 && Math.abs(viewX - roof.x - 8) < 22;
+        roof.setAlpha(behind ? 0.38 : 1);
+      }
+    }
+    this.driftMotes(cam.scrollX, cam.scrollY, cam.width / z, cam.height / z, now);
     for (let i = this.floaters.length - 1; i >= 0; i--) {
       const f = this.floaters[i];
       f.life -= delta;
-      f.img.y -= delta * 0.02;
-      f.img.setAlpha(Math.max(0, f.life / 700));
+      const age = now - f.born;
+      const pop = age < 90 ? 1.4 - (age / 90) * 0.4 : 1;
+      f.img.setScale(pop);
+      f.img.y -= delta * (age < 180 ? 0.04 : 0.018);
+      f.img.setAlpha(Math.max(0, f.life / 780));
       if (f.life <= 0) {
         f.img.destroy();
         this.floaters.splice(i, 1);
@@ -639,6 +897,7 @@ export class GameScene extends Phaser.Scene {
       name: this.ents.get(this.selfId)?.name || '',
       className: CLASSES[this.classId]?.name ?? '',
       level: this.level,
+      xp: this.xp,
       hp: this.hp,
       hpMax: this.hpMax,
       online: this.online,
@@ -665,14 +924,20 @@ export class GameScene extends Phaser.Scene {
     const g = c.getContext('2d');
     if (!g) return;
     g.imageSmoothingEnabled = false;
-    g.fillStyle = '#1a1214';
+    g.fillStyle = '#1d3a28';
     g.fillRect(0, 0, 64, 48);
-    for (const [key, tiles] of this.solids) {
+    for (const [key, cell] of this.solids) {
       const [cx, cy] = key.split(',').map(Number);
       for (let ly = 0; ly < CHUNK; ly += 2) {
         for (let lx = 0; lx < CHUNK; lx += 2) {
-          const id = tiles[ly * CHUNK + lx];
-          g.fillStyle = tileIsSolid(id) ? '#9aabbf' : id === 0 || id === 24 ? '#6a3832' : '#e0a56c';
+          const id = cell.ground[ly * CHUNK + lx];
+          const obj = cell.object[ly * CHUNK + lx];
+          let color = '#5eae4c';
+          if (id >= DUNGEON) color = '#6d625c';
+          else if (WATER_IDS.has(id)) color = '#3f86c4';
+          else if (PATH_IDS.has(id)) color = '#d2a15c';
+          if (obj && tileIsSolid(obj)) color = '#2c6a38';
+          g.fillStyle = color;
           g.fillRect(cx * 16 + lx / 2, cy * 16 + ly / 2, 1, 1);
         }
       }
@@ -716,7 +981,7 @@ export class GameScene extends Phaser.Scene {
     const cx = Math.floor(tx / CHUNK);
     const cy = Math.floor(ty / CHUNK);
     const local = this.solids.get(cx + ',' + cy);
-    const tileUnder = local ? local[(ty - cy * CHUNK) * CHUNK + (tx - cx * CHUNK)] : -1;
+    const tileUnder = local ? local.ground[(ty - cy * CHUNK) * CHUNK + (tx - cx * CHUNK)] : -1;
     return {
       selfId: this.selfId,
       x: this.predictor.x / SUB,
@@ -733,7 +998,7 @@ export class GameScene extends Phaser.Scene {
       acked: this.predictor.acked,
       pending: this.predictor.pending.length,
       lastAck: this.predictor.sent - this.predictor.pending.length,
-      chunks: [...this.chunks.keys()],
+      chunks: [...this.chunkDraw.keys()],
       entities: ents,
       banner: this.banner,
       screen: 'world',
