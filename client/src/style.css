@@ -188,7 +188,7 @@ label { display: block; margin: 12px 0; color: var(--muted); }
 @keyframes idle {
   50% { transform: translateY(-3px); }
 }
-.class-card > div { flex: 1; min-width: 0; }
+.class-card > div:not(.sprite) { flex: 1; min-width: 0; }
 .bars { width: 100%; margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
 .bar {
   position: relative;

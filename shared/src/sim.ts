@@ -93,6 +93,7 @@ export function separateBodies(
   bodies: { x: number; y: number; dead?: boolean }[],
   solidAt: SolidAt,
   minDist = 140,
+  maxPush = 6,
 ): void {
   for (let i = 0; i < bodies.length; i++) {
     const a = bodies[i];
@@ -109,7 +110,9 @@ export function separateBodies(
         dy = 0;
         dist = 1;
       }
-      const push = (minDist - dist) / 2;
+      // Capped so it is a nudge, not a shove: walking through someone is still
+      // possible, and stacked bodies drift apart over a few ticks.
+      const push = Math.min(maxPush, (minDist - dist) / 2);
       const ux = dx / dist;
       const uy = dy / dist;
       const ax = Math.round(a.x - ux * push);

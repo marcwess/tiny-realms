@@ -95,8 +95,20 @@ assert(step2.x > start.x, 'moved east');
     { x: start.x, y: start.y },
   ];
   separateBodies(pair, solid, 140);
-  assert(Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y) >= 100, 'stacked bodies separate');
+  const firstGap = Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
+  assert(firstGap > 0 && firstGap <= 14, 'one tick is only a nudge');
+  for (let t = 0; t < 40; t++) separateBodies(pair, solid, 140);
+  assert(Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y) >= 120, 'stacked bodies drift apart');
   assert(lineClear(start.x, start.y, start.x + 160, start.y, solid), 'open grass is a clear shot');
+  {
+    // Woods: a shot across a forest block is blocked, so auto-aim will not pick a target behind trees.
+    const ws = solidAtOf(world);
+    const cell = world.objects.findIndex((o) => o === 19);
+    assert(cell >= 0, 'the wilds have forest blocks');
+    const tx = cell % 128;
+    const ty = Math.floor(cell / 128);
+    assert(!lineClear((tx - 3) * 160 + 80, ty * 160 + 80, (tx + 3) * 160 + 80, ty * 160 + 80, ws), 'a shot through the wood is blocked');
+  }
 }
 
 assert(zoneAtTile(50, 50) === 'safe', 'town safe');

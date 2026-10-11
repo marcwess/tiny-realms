@@ -95,9 +95,12 @@ function applyWeapon(el: HTMLElement, classId: number): void {
     el.style.backgroundSize = '64px 64px';
     el.style.backgroundPosition = '0 0';
     el.style.backgroundRepeat = 'no-repeat';
+    // Held out in front of the body, so the bow does not cover the face.
+    el.style.left = '40px';
+    el.style.top = '6px';
     return;
   }
-  applySheet(el, classId === 2 ? 130 : 104, 4);
+  applySheet(el, classId === 2 ? 129 : 104, 4);
 }
 
 function buildCards(): void {
@@ -334,7 +337,7 @@ function paintPortrait(tile: number, classId: number): void {
   g.drawImage(sheetImg, (tile % 12) * 16, Math.floor(tile / 12) * 16, 16, 16, 2, 8, 32, 32);
   if (classId === 1) g.drawImage(bowImg, 0, 0, 16, 16, 16, 2, 24, 24);
   else {
-    const frame = classId === 2 ? 130 : 104;
+    const frame = classId === 2 ? 129 : 104;
     g.drawImage(sheetImg, (frame % 12) * 16, Math.floor(frame / 12) * 16, 16, 16, 14, 0, 26, 26);
   }
   portrait.style.backgroundImage = `url("${c.toDataURL()}")`;

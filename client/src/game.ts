@@ -173,7 +173,7 @@ function paintShimmer(g: CanvasRenderingContext2D, dx: number, dy: number, phase
 
 function weaponSpec(classId: number): { tex: string; frame?: number; ox: number; oy: number } {
   if (classId === 1) return { tex: 'bow', ox: 0.28, oy: 0.55 };
-  if (classId === 2) return { tex: 'tiles', frame: 130, ox: 0.5, oy: 0.84 };
+  if (classId === 2) return { tex: 'tiles', frame: 129, ox: 0.5, oy: 0.84 };
   return { tex: 'tiles', frame: 104, ox: 0.5, oy: 0.9 };
 }
 
@@ -375,6 +375,22 @@ export class GameScene extends Phaser.Scene {
       ...prev,
       getState: () => this.debugState(),
     };
+  }
+
+  private bannerTexture(): string {
+    const key = 'prop-pit-banner';
+    if (!this.textures.exists(key)) {
+      const c = document.createElement('canvas');
+      c.width = TILE;
+      c.height = TILE;
+      const g = c.getContext('2d');
+      if (g) {
+        g.imageSmoothingEnabled = false;
+        paintBanner(g, 0, 0);
+      }
+      this.textures.addCanvas(key, c);
+    }
+    return key;
   }
 
   private applyZoom(): void {
@@ -719,9 +735,12 @@ export class GameScene extends Phaser.Scene {
     const img = this.add.image(cx * size, cy * size, 'chunk-' + key).setOrigin(0, 0).setDepth(0);
     const propImages: Phaser.GameObjects.Image[] = [];
     for (const p of props) {
-      const sheet = p.id >= DUNGEON ? 'tiles' : 'town';
       // Full 16px frame, feet at the bottom of the tile, so the top row is never sliced off.
-      const sprite = this.add.image(p.x, p.y, sheet, tileFrame(p.id)).setOrigin(0.5, 1).setDepth(p.roof ? p.y + 8 : p.y);
+      // Painted ids (the pit banner) have no sheet frame, so they get their own small texture.
+      const sprite = (p.id === PIT_BANNER
+        ? this.add.image(p.x, p.y, this.bannerTexture())
+        : this.add.image(p.x, p.y, p.id >= DUNGEON ? 'tiles' : 'town', tileFrame(p.id))
+      ).setOrigin(0.5, 1).setDepth(p.roof ? p.y + 8 : p.y);
       propImages.push(sprite);
     }
     const shimmers: Phaser.GameObjects.Image[] = [];
@@ -965,6 +984,9 @@ export class GameScene extends Phaser.Scene {
         y = ry / SUB;
         vx = this.predictor.motion.vx;
         vy = this.predictor.motion.vy;
+        // The server turns you toward your auto-aim target when you attack; take that
+        // facing, or the bow and sword point away from what you are hitting.
+        if ((view.flags & FLAG.Attacking) !== 0) this.predictor.facingRight = (view.flags & FLAG.FacingRight) !== 0;
         view.sprite.setFlipX(!this.predictor.facingRight);
       } else {
         while (view.samples.length > 8 && view.samples[0].t < renderT - 400) view.samples.shift();
@@ -987,7 +1009,8 @@ export class GameScene extends Phaser.Scene {
       const speed = Math.hypot(vx, vy);
       const moving = view.kind !== KIND.PROJECTILE && (speed > 3 || (view.flags & FLAG.Moving) !== 0);
       const idleWave = Math.sin((now / 1200) * Math.PI * 2 + view.phase);
-      const stepWave = Math.sin((now / 160) * Math.PI * 2 + view.phase);
+      // One left-right rock per two steps; ~2.8 rocks a second reads as walking, faster reads as shivering.
+      const stepWave = Math.sin((now / 360) * Math.PI * 2 + view.phase);
       let oy = 0;
       let rot = 0;
       if (view.kind !== KIND.PROJECTILE && !dead) {
@@ -1014,33 +1037,61 @@ export class GameScene extends Phaser.Scene {
       view.wasAtk = attacking;
       if (view.weapon) {
         const flip = view.sprite.flipX;
-        const t = attacking ? Math.min(1, (now - view.swingAt) / 210) : 0;
-        let wx = flip ? -4 : 4;
-        let wy = -8;
-        let wrot = rot * 0.5;
-        if (attacking && view.subtype === 0) {
-          // Negative scale mirrors the arc, so the swing stays in facing-right space.
-          wrot = ((-75 + t * 150) * Math.PI) / 180;
-        } else if (attacking && view.subtype === 2) {
-          wrot = ((-95 + Math.sin(t * Math.PI) * 25) * Math.PI) / 180;
+        const face = flip ? -1 : 1;
+        // Time-based so the whole swing plays even after the 200ms Attacking flag drops.
+        const ATK_MS = 260;
+        const since = now - view.swingAt;
+        const t = view.swingAt > 0 && since < ATK_MS ? since / ATK_MS : -1;
+        // Hand offset in facing-right space, then mirrored and carried by the body's tilt
+        // (the body rotates about the feet), so the weapon never floats off the hand.
+        // Per-class grip: out at arm's length so the sword hilt and bow clear the face.
+        let hx = view.subtype === 0 ? 6 : view.subtype === 2 ? 5 : 6;
+        let hy = view.subtype === 0 ? -6 : -7;
+        let ang = 0;
+        if (t >= 0 && view.subtype === 0) {
+          // Wind up behind the head, slash forward and down, settle back.
+          ang = t < 0.22 ? -60 * (t / 0.22) : t < 0.62 ? -60 + 170 * ((t - 0.22) / 0.4) : 110 * (1 - (t - 0.62) / 0.38);
+          hx += t < 0.62 ? 0 : 1;
+        } else if (t >= 0 && view.subtype === 2) {
+          // Staff thrust up and toward the target.
+          const up = Math.sin(t * Math.PI);
+          hy -= Math.round(up * 4);
+          hx += Math.round(up * 2);
+          ang = up * 28;
         } else if (view.subtype === 1) {
-          const pull = attacking ? Math.sin(t * Math.PI) : Math.abs(stepWave) * 0.25;
-          wx += flip ? pull * 3 : -pull * 3;
+          // Draw: the bow comes up level and is pulled back toward the body, then snaps forward.
+          const pull = t >= 0 ? (t < 0.6 ? t / 0.6 : 1 - (t - 0.6) / 0.4) : 0;
+          hx -= Math.round(pull * 3);
+          if (t >= 0.6 && t < 0.75) hx += 1;
         } else if (moving) {
-          wrot += stepWave * 0.08;
+          ang = stepWave * 5;
         }
+        const ox = hx * face;
+        const c = Math.cos(rot);
+        const sn = Math.sin(rot);
+        const wx = px + ox * c - hy * sn;
+        const wy = py + ox * sn + hy * c;
+        const wrot = rot + ((ang * face) * Math.PI) / 180;
         const spec = weaponSpec(view.subtype);
         view.weapon
           .setOrigin(spec.ox, spec.oy)
-          .setScale(flip ? -1 : 1, 1)
+          // A full-cell bow is as tall as its archer and reads as a shield; 3/4 size reads as a bow.
+          .setScale(face * (view.subtype === 1 ? 0.75 : 1), view.subtype === 1 ? 0.75 : 1)
           .setVisible(!dead)
-          .setPosition(px + wx, py + wy)
+          .setPosition(Math.round(wx), Math.round(wy))
           .setRotation(wrot)
           .setDepth(feet + 0.2);
         if (view.glow) {
-          const show = attacking && view.subtype === 2;
+          const show = t >= 0 && view.subtype === 2;
           view.glow.setVisible(show && !dead);
-          if (show) view.glow.setPosition(px + (flip ? -11 : 11), py - 18).setAlpha(Math.sin(t * Math.PI));
+          if (show) {
+            // The gem sits ~13px up the staff from its grip.
+            const tip = 13;
+            view.glow
+              .setPosition(Math.round(wx + Math.sin(wrot) * tip), Math.round(wy - Math.cos(wrot) * tip))
+              .setAlpha(Math.sin(t * Math.PI))
+              .setScale(0.8 + Math.sin(t * Math.PI) * 0.6);
+          }
         }
       }
       const aggro = view.kind === KIND.MONSTER && (view.flags & FLAG.Aggro) !== 0 && !dead;

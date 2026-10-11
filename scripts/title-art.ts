@@ -120,8 +120,9 @@ function paintBanner(dst: Uint8Array, dw: number, dh: number, dx: number, dy: nu
   fill(dst, dw, dh, dx + 9, dy + 5, 2, 3, 0xf2a33a);
 }
 
-function paintCell(dst: Uint8Array, dw: number, dh: number, sheets: { town: RgbaImage; dungeon: RgbaImage }, id: number, dx: number, dy: number): void {
-  if (!id) return;
+function paintCell(dst: Uint8Array, dw: number, dh: number, sheets: { town: RgbaImage; dungeon: RgbaImage }, id: number, dx: number, dy: number, ground = false): void {
+  // 0 is plain grass on the ground layer and "nothing" on the object layer.
+  if (!id && !ground) return;
   if (WATER.has(id)) {
     paintWater(dst, dw, dh, id, dx, dy);
     return;
@@ -161,7 +162,7 @@ export function renderTitle(sheets = loadSheets()): RgbaImage {
       const i = (y + TITLE_Y0) * 128 + x;
       const dx = x * TILE;
       const dy = y * TILE;
-      paintCell(rgba, w, h, sheets, world.tiles[i], dx, dy);
+      paintCell(rgba, w, h, sheets, world.tiles[i], dx, dy, true);
       if (world.objects[i] === DOOR) fill(rgba, w, h, dx + 3, dy + 2, 10, 14, 0x120e0c);
     }
   }
@@ -180,52 +181,15 @@ export function renderTitle(sheets = loadSheets()): RgbaImage {
   return { w, h, rgba };
 }
 
-/** Hand-authored 16px bow in the Tiny Dungeon outline palette. Grip sits left of center. */
-export function bowImage(): RgbaImage {
-  const O = [42, 26, 20, 255];
-  const W = [196, 138, 74, 255];
-  const D = [138, 85, 48, 255];
-  const S = [244, 239, 226, 255];
-  const rows = [
-    '..WWWWWW........',
-    '.W......W.......',
-    'W........W......',
-    'W........W......',
-    'W.....S..W......',
-    '.W....S..W......',
-    '.W....S..D......',
-    '..W...S..DD.....',
-    '..W...S.DD......',
-    '..W...S.D.......',
-    '..W..S.W........',
-    '.W...S.W........',
-    '.W....SW........',
-    'W......W........',
-    '.WWWWWW.........',
-    '................',
-  ];
+/** The bow is Tiny Town frame 118 (wood limbs, grey string), copied out so the game and cards share one file. */
+export function bowImage(sheets = loadSheets()): RgbaImage {
+  const frame = 118;
+  const col = frame % COLS;
+  const row = Math.floor(frame / COLS);
   const rgba = new Uint8Array(16 * 16 * 4);
-  const pix: Record<string, number[]> = { W, D, S, O };
   for (let y = 0; y < 16; y++) {
-    for (let x = 0; x < 16; x++) {
-      const ch = rows[y][x];
-      if (ch === '.') continue;
-      const c = pix[ch];
-      // Outline any wood pixel that touches empty space.
-      let edge = false;
-      for (const [ox, oy] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        const nx = x + ox;
-        const ny = y + oy;
-        if (nx < 0 || ny < 0 || nx > 15 || ny > 15 || rows[ny][nx] === '.') edge = true;
-      }
-      const src = ch === 'S' ? S : edge ? O : c;
-      rgba.set(src, (y * 16 + x) * 4);
-    }
+    const si = ((row * TILE + y) * sheets.town.w + col * TILE) * 4;
+    rgba.set(sheets.town.rgba.subarray(si, si + 16 * 4), y * 16 * 4);
   }
   return { w: 16, h: 16, rgba };
 }

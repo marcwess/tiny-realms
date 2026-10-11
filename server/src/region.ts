@@ -406,11 +406,12 @@ export class RegionSim {
     const inputs = p.inputs.consume(budget);
     const def = CLASSES[p.classId];
     const motion: Motion = { vx: p.mvx, vy: p.mvy };
-    if (!p.dead && inputs.length === 0) {
-      const mv = applyMovement(p.x, p.y, 0, def.speed, this.solidAt, motion);
-      p.x = mv.x;
-      p.y = mv.y;
-      if (mv.moved) p.moving = true;
+    if (inputs.length === 0) {
+      // No input this tick (jitter or a stalled client). Let the reported velocity
+      // fall off so remotes stop the walk cycle, but do not move: the client never
+      // simulated this tick, so a displacement here would show up as a correction.
+      motion.vx = Math.trunc(motion.vx / 4);
+      motion.vy = Math.trunc(motion.vy / 4);
     }
     for (const input of inputs) {
       if (p.dead) continue;
@@ -609,13 +610,15 @@ export class RegionSim {
       this.stepActor(m, dirFromVector(m.homeX - m.x, m.homeY - m.y), m.def.speed, true);
     } else {
       if (m.aiTimer <= 0) {
-        m.aiDir = 1 + (m.rng() % 8);
+        // About a third of the time a wanderer stands still for a moment, so it
+        // reads as idle (and bobs) instead of pacing forever.
+        m.aiDir = m.rng() % 3 === 0 ? 0 : 1 + (m.rng() % 8);
         m.aiTimer = 8 + (m.rng() % 24);
       }
       m.aiTimer--;
       const before = m.x + m.y;
       this.stepActor(m, m.aiDir, m.def.speed, true);
-      if (m.x + m.y === before) m.aiTimer = 0;
+      if (m.aiDir !== 0 && m.x + m.y === before) m.aiTimer = 0;
     }
   }
 
