@@ -3,6 +3,7 @@ import { CLASSES } from '../../shared/src/constants.ts';
 import { dirFromVector } from '../../shared/src/sim.ts';
 import { encodeHello, encodeLogout } from '../../shared/src/protocol.ts';
 import { GameScene, bridge, type HudState } from './game.ts';
+import { textCanvas } from './font.ts';
 import { input } from './input.ts';
 
 const TOKEN_KEY = 'tiny-realms-token';
@@ -281,16 +282,51 @@ function bindHold(el: HTMLElement, down: () => void, up: () => void): void {
   });
 }
 
+function paintText(id: string, text: string, color: string, scale = 2): void {
+  const el = document.getElementById(id) as HTMLCanvasElement | null;
+  if (!el) return;
+  const src = textCanvas(text, color, scale);
+  if (el.width !== src.width || el.height !== src.height) {
+    el.width = src.width;
+    el.height = src.height;
+  }
+  const g = el.getContext('2d');
+  if (!g) return;
+  g.imageSmoothingEnabled = false;
+  g.clearRect(0, 0, el.width, el.height);
+  g.drawImage(src, 0, 0);
+}
+
+function drawHeart(): void {
+  const c = document.getElementById('hud-heart') as HTMLCanvasElement | null;
+  if (!c) return;
+  const s = 2;
+  const rows = ['0110110', '1111111', '1111111', '0111110', '0011100', '0001000'];
+  c.width = 7 * s;
+  c.height = rows.length * s;
+  const g = c.getContext('2d');
+  if (!g) return;
+  g.imageSmoothingEnabled = false;
+  rows.forEach((row, y) => {
+    [...row].forEach((bit, x) => {
+      if (bit !== '1') return;
+      g.fillStyle = '#3a100c';
+      g.fillRect(x * s + 1, y * s + 1, s, s);
+      g.fillStyle = '#e25a4a';
+      g.fillRect(x * s, y * s, s, s);
+    });
+  });
+}
+
 bridge.onHud = (s: HudState) => {
-  const id = document.getElementById('identity')!;
-  id.textContent = `${s.name || 'Hero'} · ${s.className} · Lv ${s.level}`;
+  paintText('hud-name', `${s.name || 'Hero'}  ${s.className}  Lv ${s.level}`, '#f3e6d0', 2);
   const fill = document.getElementById('hp-fill') as HTMLElement;
   fill.style.width = Math.max(0, Math.min(100, (s.hp / Math.max(1, s.hpMax)) * 100)) + '%';
-  document.getElementById('hp-text')!.textContent = `${s.hp} / ${s.hpMax}`;
-  document.getElementById('online')!.textContent = `Online ${s.online}`;
-  const tag = document.getElementById('zone-tag')!;
-  tag.textContent = s.zone === 'pvp' ? 'PvP' : s.zone === 'safe' ? 'Town' : 'Wilds';
-  tag.className = s.zone;
+  paintText('hud-hp', `${s.hp} / ${s.hpMax}`, '#f3e6d0', 2);
+  paintText('hud-online', `Online ${s.online}`, '#f3e6d0', 2);
+  const zoneLabel = s.zone === 'pvp' ? 'PvP' : s.zone === 'safe' ? 'Town' : 'Wilds';
+  const zoneColor = s.zone === 'pvp' ? '#e05a4f' : s.zone === 'safe' ? '#9ddec0' : '#e2a15a';
+  paintText('hud-zone', zoneLabel, zoneColor, 2);
   const ring = document.getElementById('skill-ring') as SVGCircleElement | null;
   if (ring) {
     const left = s.skillMax > 0 ? s.skillCd / s.skillMax : 0;
@@ -300,10 +336,10 @@ bridge.onHud = (s: HudState) => {
   atk.style.opacity = s.attackCd > 0 ? '0.55' : '1';
   const banner = document.getElementById('banner')!;
   banner.hidden = !s.banner;
-  banner.textContent = s.banner;
+  if (s.banner) paintText('banner-text', s.banner, '#ffd0c8', 3);
   const dead = document.getElementById('dead')!;
   dead.hidden = !s.dead;
-  document.getElementById('dead-t')!.textContent = (s.deadIn / 1000).toFixed(1);
+  if (s.dead) paintText('dead-text', `You fell. Town in ${Math.max(0, s.deadIn / 1000).toFixed(1)}`, '#f3e6d0', 2);
 };
 
 async function boot(): Promise<void> {
@@ -334,6 +370,14 @@ async function boot(): Promise<void> {
   };
   document.getElementById('btn-account-out')!.onclick = () => void logout();
   document.getElementById('btn-logout')!.onclick = () => void logout();
+  drawHeart();
+  const menuBtn = document.getElementById('btn-menu')!;
+  const menuPop = document.getElementById('menu-pop')!;
+  menuBtn.onclick = () => {
+    const open = menuPop.hidden;
+    menuPop.hidden = !open;
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
   bindJoystick();
   bindHold(
     document.getElementById('btn-attack')!,

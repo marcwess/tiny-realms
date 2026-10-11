@@ -44,20 +44,26 @@
 
     <div id="hud" hidden>
       <div id="top">
-        <div>
-          <div id="identity">—</div>
-          <div id="hp"><div id="hp-fill"></div></div>
-          <div id="hp-text"></div>
+        <div id="vitals">
+          <canvas id="hud-name" width="8" height="8"></canvas>
+          <div id="hp-row">
+            <canvas id="hud-heart" width="14" height="12"></canvas>
+            <div id="hp"><div id="hp-fill"></div></div>
+          </div>
+          <canvas id="hud-hp" width="8" height="8"></canvas>
         </div>
         <div id="top-right">
-          <div id="online">Online 1</div>
-          <div id="zone-tag">Town</div>
+          <canvas id="hud-online" width="8" height="8"></canvas>
+          <canvas id="hud-zone" width="8" height="8"></canvas>
           <canvas id="minimap" width="64" height="48"></canvas>
-          <button id="btn-logout" type="button">Log out</button>
+          <button id="btn-menu" type="button" aria-expanded="false">Menu</button>
+          <div id="menu-pop" hidden>
+            <button id="btn-logout" type="button">Log out</button>
+          </div>
         </div>
       </div>
-      <div id="banner" hidden></div>
-      <div id="dead" hidden>You fell. Respawning in town… <b id="dead-t">3</b></div>
+      <div id="banner" hidden><canvas id="banner-text"></canvas></div>
+      <div id="dead" hidden><canvas id="dead-text"></canvas></div>
       <div id="joy-zone"></div>
       <div id="joy-base" hidden></div>
       <div id="joy-knob" hidden></div>

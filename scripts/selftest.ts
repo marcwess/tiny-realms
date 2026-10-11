@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TICK_MS } from '../shared/src/constants.ts';
@@ -18,6 +18,14 @@ function assert(cond: unknown, msg: string): void {
 const world = buildWorld();
 const problems = validateWorld(world);
 assert(problems.length === 0, 'world: ' + problems.join('; '));
+let white = 0;
+for (const id of world.tiles) if (id === 60 || id === 61 || id === 62) white++;
+assert(white === 0, 'blank white tiles are not used as flowers');
+
+const png = readFileSync(new URL('../client/public/assets/tilemap_packed.png', import.meta.url));
+assert(png.readUInt32BE(16) === 192 && png.readUInt32BE(20) === 176, 'tilemap_packed is 192x176');
+const frameOf = (n: number) => ({ col: n % 12, row: Math.floor(n / 12), x: (n % 12) * 16, y: Math.floor(n / 12) * 16 });
+assert(frameOf(84).y === 112 && frameOf(96).y === 128 && frameOf(108).y === 144 && frameOf(112).x === 64 && frameOf(112).y === 144, 'frame N = row*12+col');
 
 const q = new InputQueue();
 q.push({ seq: 1, dir: 3, buttons: 0 });

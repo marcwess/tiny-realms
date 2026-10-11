@@ -125,6 +125,8 @@ export class GameScene extends Phaser.Scene {
   private debug = false;
   private stepDir = 0;
   private miniTick = 0;
+  private missing = 0;
+  private tilesetOk = false;
   private keys!: {
     W: Phaser.Input.Keyboard.Key;
     A: Phaser.Input.Keyboard.Key;
@@ -144,7 +146,12 @@ export class GameScene extends Phaser.Scene {
 
   preload(): void {
     const base = import.meta.env.BASE_URL;
-    this.load.spritesheet('tiles', base + 'assets/tilemap_packed.png', { frameWidth: 16, frameHeight: 16 });
+    this.load.spritesheet('tiles', base + 'assets/tilemap_packed.png', {
+      frameWidth: 16,
+      frameHeight: 16,
+      spacing: 0,
+      margin: 0,
+    });
     this.load.spritesheet('fx-hit', base + 'assets/fx/hit_yellow.png', { frameWidth: 48, frameHeight: 48 });
     this.load.spritesheet('fx-arrow', base + 'assets/fx/hit_blue.png', { frameWidth: 32, frameHeight: 32 });
     this.load.spritesheet('fx-magic', base + 'assets/fx/magic_blue.png', { frameWidth: 32, frameHeight: 32 });
@@ -170,8 +177,13 @@ export class GameScene extends Phaser.Scene {
     kb.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
     this.cameras.main.setRoundPixels(true);
     this.cameras.main.setBackgroundColor('#141014');
+    // Phaser's camera matrix applies zoom to the origin offset. With the
+    // default origin of 0.5 and zoom 3, the view is shifted by a full screen
+    // and the player is culled. Origin 0 keeps scroll as the top-left.
+    this.cameras.main.setOrigin(0, 0);
     this.scale.on('resize', () => this.applyZoom());
     this.applyZoom();
+    this.tilesetOk = this.assertTileset();
     this.minimap = document.getElementById('minimap') as HTMLCanvasElement | null;
     this.debug = new URLSearchParams(location.search).has('debug');
     bridge.scene = this;
@@ -187,6 +199,27 @@ export class GameScene extends Phaser.Scene {
   private applyZoom(): void {
     const cam = this.cameras.main;
     cam.setZoom(chooseZoom(this.scale.width, this.scale.height));
+  }
+
+  /** tilemap_packed.png is 12 columns, no spacing. Frame N is row*12+col. */
+  private assertTileset(): boolean {
+    const tex = this.textures.get('tiles');
+    const src = tex.getSourceImage() as { width?: number; height?: number };
+    const cols = 12;
+    const okSize = src.width === 192 && src.height === 176;
+    let ok = okSize;
+    for (let i = 0; i < cols * 11; i++) {
+      const frame = tex.get(i);
+      const missing = !tex.has(String(i)) || frame.texture.key === '__MISSING' || String(frame.name) === '__MISSING';
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      if (missing || frame.cutX !== col * 16 || frame.cutY !== row * 16 || frame.cutWidth !== 16 || frame.cutHeight !== 16) {
+        ok = false;
+        console.error('[tiny] bad tile frame', i, frame?.cutX, frame?.cutY, frame?.name);
+      }
+    }
+    if (!ok) console.error('[tiny] tileset check failed', src.width, src.height);
+    return ok;
   }
 
   private makeProjTextures(): void {
@@ -420,6 +453,7 @@ export class GameScene extends Phaser.Scene {
       const key = kind === KIND.PROJECTILE ? (subtype === 2 ? 'fireball' : subtype === 1 ? 'orb' : 'arrow0') : 'tiles';
       const sprite = (kind === KIND.PROJECTILE ? this.add.sprite(0, 0, key) : this.add.sprite(0, 0, key, frame)).setDepth(2);
       sprite.setOrigin(0.5, 0.5);
+      if (sprite.texture.key === '__MISSING' || String(sprite.frame?.name) === '__MISSING') this.missing++;
       view = { id, kind, subtype, hp, flags, name, vx: 0, vy: 0, samples: [], sprite };
       if (kind === KIND.MONSTER) view.bar = this.add.graphics().setDepth(4);
       this.ents.set(id, view);
@@ -581,7 +615,8 @@ export class GameScene extends Phaser.Scene {
     if (local !== this.zone) this.noteZone(local);
     else this.zoneName = localName;
     const banner = now < this.bannerUntil ? this.banner : '';
-    const selfFlags = this.ents.get(this.selfId)?.flags ?? 0;
+    const selfEnt = this.ents.get(this.selfId);
+    const selfFlags = selfEnt?.flags ?? 0;
     const dead = (selfFlags & FLAG.Dead) !== 0 || this.hp <= 0;
     bridge.onHud({
       name: this.ents.get(this.selfId)?.name || '',
@@ -613,22 +648,28 @@ export class GameScene extends Phaser.Scene {
     const g = c.getContext('2d');
     if (!g) return;
     g.imageSmoothingEnabled = false;
-    g.fillStyle = '#100c0e';
+    g.fillStyle = '#1a1214';
     g.fillRect(0, 0, 64, 48);
-    const px = Math.floor(this.predictor.x / SUB / TILE / 2);
-    const py = Math.floor(this.predictor.y / SUB / TILE / 2);
-    g.fillStyle = '#fff';
-    g.fillRect(px, py, 2, 2);
     for (const [key, tiles] of this.solids) {
       const [cx, cy] = key.split(',').map(Number);
-      for (let i = 0; i < tiles.length; i += 2) {
-        const lx = (i % CHUNK) >> 1;
-        const ly = Math.floor(i / CHUNK) >> 1;
-        const id = tiles[i];
-        g.fillStyle = tileIsSolid(id) ? '#6d7c92' : id === 0 ? '#5a302c' : '#c48a58';
-        g.fillRect(cx * 16 + lx, cy * 16 + ly, 1, 1);
+      for (let ly = 0; ly < CHUNK; ly += 2) {
+        for (let lx = 0; lx < CHUNK; lx += 2) {
+          const id = tiles[ly * CHUNK + lx];
+          g.fillStyle = tileIsSolid(id) ? '#9aabbf' : id === 0 || id === 1 ? '#6a3832' : '#e0a56c';
+          g.fillRect(cx * 16 + lx / 2, cy * 16 + ly / 2, 1, 1);
+        }
       }
     }
+    g.strokeStyle = '#ff4040';
+    g.lineWidth = 1;
+    for (const r of this.regions) {
+      if (r.zone !== 'pvp') continue;
+      g.strokeRect(r.x / 2 + 0.5, r.y / 2 + 0.5, r.w / 2 - 1, r.h / 2 - 1);
+    }
+    const px = Math.floor(this.predictor.x / SUB / TILE / 2);
+    const py = Math.floor(this.predictor.y / SUB / TILE / 2);
+    g.fillStyle = '#fff6d8';
+    g.fillRect(px, py, 2, 2);
   }
 
   private debugState() {
@@ -648,11 +689,24 @@ export class GameScene extends Phaser.Scene {
     const fpsOf = (dt: number) => (dt > 0 ? 1000 / dt : 0);
     const median = dts.length ? fpsOf(dts[Math.floor(dts.length / 2)]) : 0;
     const p10 = dts.length ? fpsOf(dts[Math.min(dts.length - 1, Math.floor(dts.length * 0.9))]) : 0;
+    const selfEnt = this.ents.get(this.selfId);
+    const frame = selfEnt?.sprite.frame;
+    const tx = Math.floor(this.predictor.x / (TILE * SUB));
+    const ty = Math.floor(this.predictor.y / (TILE * SUB));
+    const cx = Math.floor(tx / CHUNK);
+    const cy = Math.floor(ty / CHUNK);
+    const local = this.solids.get(cx + ',' + cy);
+    const tileUnder = local ? local[(ty - cy * CHUNK) * CHUNK + (tx - cx * CHUNK)] : -1;
     return {
       selfId: this.selfId,
       x: this.predictor.x / SUB,
       y: this.predictor.y / SUB,
       hp: this.hp,
+      tileUnder,
+      tilesetOk: this.tilesetOk,
+      missing: this.missing,
+      frame: frame ? { name: String(frame.name), x: frame.cutX, y: frame.cutY, w: frame.cutWidth, h: frame.cutHeight, u0: frame.u0, v0: frame.v0, u1: frame.u1, v1: frame.v1 } : null,
+      source: frame ? { w: frame.source.width, h: frame.source.height } : null,
       zone: this.zone,
       sent: this.predictor.sent,
       acked: this.predictor.acked,

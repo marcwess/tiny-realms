@@ -43,6 +43,8 @@ fly deploy
 
 One seamless overworld, 128×96 tiles, split into 32×32 chunks (4×3). The client only keeps chunks inside an interest radius: subscribe at 28 tiles, drop at 36, so the map can grow and later be split across processes by region. A dungeon instance is a separate region later. M0 has the data model and one entrance: the stairs in the west crypt. Standing on them shows a banner. Nothing is teleported.
 
+`tilemap_packed.png` is loaded as a 16×16 spritesheet with no spacing and no margin (12 columns). Frame N is row×12+col: mage 84, knight 96, archer 112. The sheet has no green grass; outdoor ground is the sand tiles, with rocks. Town floors are the dark stone tiles, with walls, doors, and props. Blank white frames (60–62) are not used.
+
 Zone flags live on region rectangles:
 
 | Place | Flag |

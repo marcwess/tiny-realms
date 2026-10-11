@@ -64,40 +64,6 @@ export function buildWorld(): WorldData {
   ];
   for (const [x, y] of rocks) paint(x, y, 11);
 
-  scatter(tiles);
-
-  // East-west road through town doors, crypt, and the pit. North-south road out the south gate.
-  for (let x = 22; x <= 69; x++) paint(x, 50, ROAD);
-  for (let y = 60; y <= 74; y++) paint(50, y, ROAD);
-
-  building(tiles, TOWN.x, TOWN.y, TOWN.w, TOWN.h, FLOOR_IN, [
-    { x: 61, y: 50 },
-    { x: 40, y: 50 },
-    { x: 50, y: 59 },
-    { x: 50, y: 42 },
-  ]);
-  building(tiles, 44, 44, 12, 5, FLOOR_IN, [{ x: 50, y: 48 }]);
-  building(tiles, 42, 52, 7, 6, FLOOR_IN, [{ x: 48, y: 54 }]);
-  building(tiles, 53, 52, 7, 6, FLOOR_IN, [{ x: 53, y: 54 }]);
-  paint(46, 46, 75);
-  paint(47, 46, 72);
-  paint(56, 46, 82);
-  paint(44, 54, 74);
-  paint(57, 54, 72);
-
-  building(tiles, PVP_PIT.x, PVP_PIT.y, PVP_PIT.w, PVP_PIT.h, FLOOR_IN, [{ x: PVP_PIT.x, y: 50 }]);
-  paint(PVP_PIT.x, 46, BANNER);
-  paint(PVP_PIT.x, 54, BANNER);
-  paint(PVP_PIT.x + PVP_PIT.w - 1, 44, BANNER);
-  paint(PVP_PIT.x + PVP_PIT.w - 1, 57, BANNER);
-
-  building(tiles, 8, 44, 14, 12, FLOOR_IN, [{ x: 21, y: 50 }]);
-  paint(CRYPT_STAIRS.x, CRYPT_STAIRS.y, STAIRS);
-  paint(15, 48, 64);
-
-  const solid = new Uint8Array(tiles.length);
-  for (let i = 0; i < tiles.length; i++) solid[i] = tileIsSolid(tiles[i]) ? 1 : 0;
-
   const spawns: MonsterSpawn[] = [
     { monsterId: 0, tx: 50, ty: 64 },
     { monsterId: 0, tx: 44, ty: 70 },
@@ -120,6 +86,45 @@ export function buildWorld(): WorldData {
     { monsterId: 3, tx: 24, ty: 62 },
     { monsterId: 6, tx: 34, ty: 36 },
   ];
+  const spawnAt = new Set(spawns.map((s) => s.tx + ',' + s.ty));
+  scatter(tiles, spawnAt);
+
+  // East-west road through town doors, crypt, and the pit. North-south road out the south gate.
+  for (let x = 22; x <= 69; x++) paint(x, 50, ROAD);
+  for (let y = 60; y <= 74; y++) paint(50, y, ROAD);
+
+  building(tiles, TOWN.x, TOWN.y, TOWN.w, TOWN.h, FLOOR_IN, [
+    { x: 61, y: 50 },
+    { x: 40, y: 50 },
+    { x: 50, y: 59 },
+    { x: 50, y: 42 },
+  ]);
+  building(tiles, 44, 44, 12, 5, FLOOR_IN, [{ x: 50, y: 48 }]);
+  building(tiles, 42, 52, 7, 6, FLOOR_IN, [{ x: 48, y: 54 }]);
+  building(tiles, 53, 52, 7, 6, FLOOR_IN, [{ x: 53, y: 54 }]);
+  paint(46, 46, 75);
+  paint(47, 46, 72);
+  paint(56, 46, 82);
+  paint(44, 54, 74);
+  paint(57, 54, 72);
+  // Square around the crossroads, off the roads so three heroes can stand on y=50.
+  paint(46, 49, 72);
+  paint(54, 49, 82);
+  paint(46, 51, 74);
+  paint(54, 51, 72);
+
+  building(tiles, PVP_PIT.x, PVP_PIT.y, PVP_PIT.w, PVP_PIT.h, FLOOR_IN, [{ x: PVP_PIT.x, y: 50 }]);
+  paint(PVP_PIT.x, 46, BANNER);
+  paint(PVP_PIT.x, 54, BANNER);
+  paint(PVP_PIT.x + PVP_PIT.w - 1, 44, BANNER);
+  paint(PVP_PIT.x + PVP_PIT.w - 1, 57, BANNER);
+
+  building(tiles, 8, 44, 14, 12, FLOOR_IN, [{ x: 21, y: 50 }]);
+  paint(CRYPT_STAIRS.x, CRYPT_STAIRS.y, STAIRS);
+  paint(15, 48, 64);
+
+  const solid = new Uint8Array(tiles.length);
+  for (let i = 0; i < tiles.length; i++) solid[i] = tileIsSolid(tiles[i]) ? 1 : 0;
 
   return { tiles, solid, spawns };
 }
@@ -141,6 +146,10 @@ function building(
       const T = ty === y;
       const B = ty === y + h - 1;
       let tile = floor;
+      if (!L && !R && !T && !B && floor === FLOOR_IN) {
+        const h = (Math.imul(tx, 2246822519) ^ Math.imul(ty, 3266489917)) >>> 0;
+        if (h % 4 === 0) tile = 1;
+      }
       if (L || R || T || B) {
         if (T && L) tile = 2;
         else if (T && R) tile = 4;
@@ -160,16 +169,22 @@ function building(
   }
 }
 
-function scatter(tiles: Uint8Array): void {
+function scatter(tiles: Uint8Array, spawnAt: Set<string>): void {
   for (let y = 2; y < WORLD_H - 2; y++) {
     for (let x = 2; x < WORLD_W - 2; x++) {
       if (tiles[idx(x, y)] !== FLOOR_OUT) continue;
       if (y === 50 && x >= 14 && x <= 90) continue;
       if (x === 50 && y >= 48 && y <= 78) continue;
       const h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) >>> 0;
-      if (h % 47 === 0) tiles[idx(x, y)] = 11;
-      else if (h % 29 === 0) tiles[idx(x, y)] = 60;
-      else if (h % 53 === 0) tiles[idx(x, y)] = 61;
+      // 48 and 49 are the walkable sand. 60/61 are blank white frames, so they stay unused.
+      if (h % 3 === 0) tiles[idx(x, y)] = 49;
+      const around = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ].every(([dx, dy]) => tiles[idx(x + dx, y + dy)] === FLOOR_OUT || tiles[idx(x + dx, y + dy)] === 49);
+      if (h % 37 === 0 && around && !spawnAt.has(x + ',' + y)) tiles[idx(x, y)] = 11;
     }
   }
 }
