@@ -5,37 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#1a1214" />
     <title>Tiny Realms</title>
+    <style>
+      @font-face {
+        font-family: "Kenney Mini";
+        src: url("assets/fonts/KenneyMiniSquare.ttf") format("truetype");
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Kenney Square";
+        src: url("assets/fonts/KenneyPixelSquare.ttf") format("truetype");
+        font-display: swap;
+      }
+    </style>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <div id="game"></div>
+    <div id="backdrop"></div>
 
     <section id="screen-auth" class="screen">
+      <p class="logo">Tiny Realms</p>
       <div class="panel">
-        <p class="eyebrow">A small world, still open</p>
-        <h1>Tiny Realms</h1>
-        <p class="lede">One town, one wild, and a pit that does not forgive.</p>
-        <label>Username <input id="auth-user" autocomplete="username" maxlength="16" enterkeyhint="next" /></label>
-        <label>Password <input id="auth-pass" type="password" autocomplete="current-password" maxlength="64" enterkeyhint="done" /></label>
+        <p class="lede">A small town, a wild river, and a pit that does not forgive.</p>
+        <label>Username <input id="auth-user" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" /></label>
+        <label>Password <input id="auth-pass" name="password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" /></label>
         <p id="auth-error" class="error" hidden></p>
         <div class="row">
           <button id="btn-register" type="button">Create account</button>
           <button id="btn-login" type="button" class="primary">Log in</button>
         </div>
-        <p class="credits">Tiles: Kenney Tiny Dungeon (CC0)</p>
-        <p class="credits">Pixel effects: Super Pixel Effects Gigapack - Will Tice / unTied Games</p>
       </div>
+      <button id="link-credits" type="button" class="text-link">Credits</button>
     </section>
 
     <section id="screen-char" class="screen" hidden>
+      <button id="btn-account-out" type="button" class="text-link corner-link">Log out</button>
       <div class="panel wide">
-        <div class="row spread">
-          <h1 id="char-title">Your hero</h1>
-          <button id="btn-account-out" type="button" class="ghost">Log out</button>
-        </div>
+        <h1 id="char-title">Your hero</h1>
         <div id="char-list"></div>
         <h2>Create a character</h2>
-        <label>Name <input id="char-name" maxlength="16" autocomplete="off" /></label>
+        <label>Name <input id="char-name" name="character-name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" /></label>
         <div id="class-cards" class="cards"></div>
         <p id="char-error" class="error" hidden></p>
         <button id="btn-create" type="button" class="primary">Create character</button>
@@ -45,21 +54,22 @@
     <div id="hud" hidden>
       <div id="top">
         <div id="vitals">
-          <canvas id="hud-name" width="8" height="8"></canvas>
-          <div id="hp-row">
-            <canvas id="hud-heart" width="14" height="12"></canvas>
-            <div id="hp"><div id="hp-fill"></div></div>
+          <div id="portrait"></div>
+          <div id="vital-text">
+            <canvas id="hud-name" width="8" height="8"></canvas>
+            <div id="hp"><div id="hp-fill"></div><canvas id="hud-hp" width="8" height="8"></canvas></div>
+            <div id="xp"><div id="xp-fill"></div></div>
           </div>
-          <canvas id="hud-hp" width="8" height="8"></canvas>
         </div>
         <div id="top-right">
-          <canvas id="hud-online" width="8" height="8"></canvas>
-          <canvas id="hud-zone" width="8" height="8"></canvas>
-          <canvas id="minimap" width="64" height="48"></canvas>
-          <button id="btn-menu" type="button" aria-expanded="false">Menu</button>
-          <div id="menu-pop" hidden>
-            <button id="btn-logout" type="button">Log out</button>
+          <div id="map-col">
+            <div id="map-frame">
+              <canvas id="minimap" width="64" height="48"></canvas>
+            </div>
+            <div id="zone-banner"><canvas id="hud-zone" width="8" height="8"></canvas></div>
+            <canvas id="hud-online" width="8" height="8"></canvas>
           </div>
+          <button id="btn-menu" type="button" aria-label="Menu" aria-expanded="false"></button>
         </div>
       </div>
       <div id="banner" hidden><canvas id="banner-text"></canvas></div>
@@ -68,11 +78,28 @@
       <div id="joy-base" hidden></div>
       <div id="joy-knob" hidden></div>
       <div id="actions">
-        <button id="btn-skill" type="button">
-          <span>SKILL</span>
+        <button id="btn-skill" type="button" aria-label="Skill">
+          <img id="skill-icon" alt="" src="assets/ui/icon_star.png" />
           <svg viewBox="0 0 36 36" aria-hidden="true"><circle id="skill-ring" cx="18" cy="18" r="16" pathLength="100" /></svg>
         </button>
-        <button id="btn-attack" type="button">ATTACK</button>
+        <button id="btn-attack" type="button" aria-label="Attack">
+          <img id="attack-icon" alt="" src="assets/ui/icon_sword.png" />
+        </button>
+      </div>
+    </div>
+    <div id="menu-pop" hidden>
+      <div class="panel menu-card">
+        <button id="menu-close" type="button" class="close-x" aria-label="Close">X</button>
+        <p class="menu-title">Menu</p>
+        <button id="btn-logout" type="button">Log out</button>
+        <button id="btn-credits" type="button">Credits</button>
+        <button id="btn-settings" type="button">Settings</button>
+      </div>
+    </div>
+    <div id="modal" hidden>
+      <div class="panel">
+        <p id="modal-body"></p>
+        <button id="modal-close" type="button" class="primary">Close</button>
       </div>
     </div>
     <script type="module" src="./src/main.ts"></script>

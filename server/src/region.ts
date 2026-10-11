@@ -30,8 +30,8 @@ import {
   type EvMsg,
   type SnapEnt,
 } from '../../shared/src/protocol.ts';
-import { applyMovement, decayKnock, dirFromVector, dist2, type SolidAt } from '../../shared/src/sim.ts';
-import { buildWorld, chunkTiles, solidAtOf, type WorldData } from '../../shared/src/world.ts';
+import { applyMovement, blocked, decayKnock, dirFromVector, dist2, type SolidAt } from '../../shared/src/sim.ts';
+import { buildWorld, chunkSlice, openSpotNear, reachableFromSpawn, solidAtOf, type WorldData } from '../../shared/src/world.ts';
 import {
   ENTRANCES,
   REGIONS,
@@ -102,6 +102,7 @@ interface Monster extends Body {
   aiDir: number;
   aiTimer: number;
   rng: () => number;
+  aggro: boolean;
 }
 
 interface Proj {
@@ -157,6 +158,7 @@ export class RegionSim {
   readonly id = 'overworld';
   readonly world: WorldData;
   readonly solidAt: SolidAt;
+  private readonly reach: Uint8Array;
   tickN = 0;
   private nextId = 1;
   private players = new Map<number, Player>();
@@ -169,6 +171,7 @@ export class RegionSim {
   constructor() {
     this.world = buildWorld();
     this.solidAt = solidAtOf(this.world);
+    this.reach = reachableFromSpawn(this.world);
     for (const s of this.world.spawns) {
       const def = MONSTERS[s.monsterId];
       const homeX = s.tx * TILE_SUB + TILE_SUB / 2;
@@ -196,6 +199,7 @@ export class RegionSim {
         attackCd: 0,
         aiDir: 0,
         aiTimer: 0,
+        aggro: false,
         rng: lcg(1000 + s.tx * 17 + s.ty),
       });
     }
@@ -272,10 +276,14 @@ export class RegionSim {
     let x = opts.x;
     let y = opts.y;
     let hp = opts.hp;
-    if (hp <= 0 || this.solidAt(tileOf(x), tileOf(y))) {
+    const spot = hp > 0 ? openSpotNear(this.world, this.reach, x, y) : null;
+    if (spot) {
+      x = spot.x;
+      y = spot.y;
+    } else {
       x = SPAWN_SUB.x;
       y = SPAWN_SUB.y;
-      hp = def.hp;
+      if (hp <= 0) hp = def.hp;
     }
     const player: Player = {
       id: this.nextId++,
@@ -543,6 +551,7 @@ export class RegionSim {
   /** Monsters only. Player records never reach this function. */
   private updateMonster(m: Monster): void {
     m.moving = false;
+    m.aggro = false;
     if (m.attacking > 0) m.attacking--;
     if (m.dead) {
       if (m.respawn > 0) m.respawn--;
@@ -566,6 +575,7 @@ export class RegionSim {
     const target = this.nearestPlayer(m);
     const leash = dist2(m.x, m.y, m.homeX, m.homeY) > 2200 * 2200;
     if (target && !leash) {
+      m.aggro = true;
       const d = dist2(m.x, m.y, target.x, target.y);
       if (d <= m.def.range * m.def.range && m.attackCd <= 0) {
         m.attackCd = m.def.cd;
@@ -618,8 +628,10 @@ export class RegionSim {
 
   private applyKnock(body: Player | Monster): void {
     if (body.kbx === 0 && body.kby === 0) return;
-    if (!this.solidAt(tileOf(body.x + body.kbx), tileOf(body.y))) body.x += body.kbx;
-    if (!this.solidAt(tileOf(body.x), tileOf(body.y + body.kby))) body.y += body.kby;
+    // Test the whole body, not just its centre, so a hit can't shove anyone
+    // half into a tree or fence where every move is then blocked.
+    if (!blocked(body.x + body.kbx, body.y, this.solidAt)) body.x += body.kbx;
+    if (!blocked(body.x, body.y + body.kby, this.solidAt)) body.y += body.kby;
     body.kbx = decayKnock(body.kbx);
     body.kby = decayKnock(body.kby);
   }
@@ -632,7 +644,9 @@ export class RegionSim {
     if (target.kind === KIND.PLAYER && src && src.kind === KIND.MONSTER) {
       if (!monsterCanHurt(target.x, target.y)) return;
     }
-    target.hp = Math.max(0, target.hp - amount);
+    const crit = src?.kind === KIND.PLAYER && ((this.tickN + target.id * 13) & 7) === 0;
+    const dealt = crit ? Math.min(255, amount * 2) : amount;
+    target.hp = Math.max(0, target.hp - dealt);
     const fromX = src ? src.x : target.x;
     const fromY = src ? src.y : target.y;
     const dx = target.x - fromX;
@@ -646,8 +660,8 @@ export class RegionSim {
       b: src ? src.id : 0,
       x: target.x,
       y: target.y,
-      n: amount,
-      fx,
+      n: dealt,
+      fx: crit ? fx | 128 : fx,
     });
     if (target.hp <= 0) {
       target.dead = true;
@@ -676,7 +690,8 @@ export class RegionSim {
       if (!conn.subscribed.has(key)) {
         conn.subscribed.add(key);
         const [cx, cy] = key.split(',');
-        this.send(conn, encodeChunk(Number(cx), Number(cy), chunkTiles(this.world, Number(cx), Number(cy))));
+        const slice = chunkSlice(this.world, Number(cx), Number(cy));
+        this.send(conn, encodeChunk(Number(cx), Number(cy), slice.ground, slice.object));
       }
     }
     const visible = new Map<number, Player | Monster | Proj>();
@@ -766,13 +781,14 @@ export class RegionSim {
   }
 }
 
-function flagsOf(e: { facingRight?: boolean; dead?: boolean; attacking?: number; stun?: number; moving?: boolean }): number {
+function flagsOf(e: { facingRight?: boolean; dead?: boolean; attacking?: number; stun?: number; moving?: boolean; aggro?: boolean }): number {
   let f = 0;
   if (e.facingRight) f |= FLAG.FacingRight;
   if (e.dead) f |= FLAG.Dead;
   if ((e.attacking ?? 0) > 0) f |= FLAG.Attacking;
   if ((e.stun ?? 0) > 0) f |= FLAG.Stunned;
   if (e.moving) f |= FLAG.Moving;
+  if (e.aggro) f |= FLAG.Aggro;
   return f;
 }
 

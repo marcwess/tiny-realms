@@ -4,10 +4,10 @@ import path from 'node:path';
 import { TICK_MS } from '../shared/src/constants.ts';
 import { InputQueue } from '../shared/src/inputQueue.ts';
 import { sampleInterp } from '../shared/src/interest.ts';
-import { applyMovement } from '../shared/src/sim.ts';
+import { applyMovement, blocked } from '../shared/src/sim.ts';
 import { decodeAdd, decodeSnap, encodeAdd, encodeInput, decodeInput, encodeSnap } from '../shared/src/protocol.ts';
 import { playersCanDamage, SPAWN_SUB, zoneAtTile } from '../shared/src/zones.ts';
-import { buildWorld, solidAtOf, validateWorld } from '../shared/src/world.ts';
+import { buildWorld, openSpotNear, reachableFromSpawn, solidAtOf, validateWorld } from '../shared/src/world.ts';
 import { hashPassword, verifyPassword } from '../server/src/auth.ts';
 import { SqliteAccountRepository } from '../server/src/repo.ts';
 
@@ -15,12 +15,39 @@ function assert(cond: unknown, msg: string): void {
   if (!cond) throw new Error(msg);
 }
 
+{
+  // Re-login / reconnect: stale high seqs from the old session, then seq 1.. again.
+  const q = new InputQueue();
+  q.push({ seq: 2458, dir: 3, buttons: 0 });
+  q.push({ seq: 2459, dir: 3, buttons: 0 });
+  q.consume(2);
+  q.push({ seq: 1, dir: 3, buttons: 0 });
+  q.push({ seq: 2, dir: 3, buttons: 0 });
+  assert(q.consume(2).length === 2, 'input queue accepts a restarted client');
+  q.push({ seq: 1, dir: 3, buttons: 0 });
+  assert(q.length === 0, 'input queue still drops a duplicate');
+}
 const world = buildWorld();
 const problems = validateWorld(world);
 assert(problems.length === 0, 'world: ' + problems.join('; '));
-let white = 0;
-for (const id of world.tiles) if (id === 60 || id === 61 || id === 62) white++;
-assert(white === 0, 'blank white tiles are not used as flowers');
+assert(world.tiles.length === 128 * 96 && world.objects.length === world.tiles.length, 'world layers');
+{
+  const reach = reachableFromSpawn(world);
+  const solidAt = solidAtOf(world);
+  // Every saved position, including ones from the old map inside new trees,
+  // houses or the river, must load into a free spot connected to town.
+  for (let ty = 0; ty < 96; ty++) {
+    for (let tx = 0; tx < 128; tx++) {
+      for (const [ox, oy] of [[80, 80], [20, 140], [150, 30]]) {
+        const spot = openSpotNear(world, reach, tx * 160 + ox, ty * 160 + oy);
+        if (!spot) continue;
+        assert(!blocked(spot.x, spot.y, solidAt), 'relocated spot is free at ' + tx + ',' + ty);
+        assert(reach[Math.floor(spot.y / 160) * 128 + Math.floor(spot.x / 160)] === 1, 'relocated spot reachable');
+      }
+    }
+  }
+  assert(!blocked(SPAWN_SUB.x, SPAWN_SUB.y, solidAt), 'spawn body is free');
+}
 
 const png = readFileSync(new URL('../client/public/assets/tilemap_packed.png', import.meta.url));
 assert(png.readUInt32BE(16) === 192 && png.readUInt32BE(20) === 176, 'tilemap_packed is 192x176');

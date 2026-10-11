@@ -42,32 +42,101 @@ const G: Record<string, string[]> = {
   '.': ['000', '000', '000', '000', '010'],
 };
 
-export function textCanvas(text: string, color: string, scale = 2): HTMLCanvasElement {
+const OUTLINE = '#140c0a';
+
+function bitmapMask(text: string): { mask: Uint8Array; w: number; h: number } {
   const rows = 5;
   const gw = 3;
   const gap = 1;
-  const chars = [...text.toUpperCase()].map((ch) => G[ch] ?? G[' ']);
-  const w = Math.max(1, chars.length * (gw + gap) - gap) * scale;
-  const h = rows * scale;
-  const c = document.createElement('canvas');
-  c.width = w + scale;
-  c.height = h + scale;
-  const g = c.getContext('2d');
-  if (!g) return c;
-  g.imageSmoothingEnabled = false;
+  const chars = [...text].map((ch) => G[ch.toUpperCase()] ?? G[ch] ?? G[' ']);
+  const w = Math.max(1, chars.length * (gw + gap) - gap);
+  const mask = new Uint8Array(w * rows);
   chars.forEach((glyph, ci) => {
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < gw; x++) {
-        if (glyph[y][x] !== '1') continue;
-        const px = (ci * (gw + gap) + x) * scale;
-        const py = y * scale;
-        g.fillStyle = '#000';
-        g.fillRect(px + scale, py, scale, scale);
-        g.fillRect(px, py + scale, scale, scale);
-        g.fillStyle = color;
-        g.fillRect(px, py, scale, scale);
+        if (glyph[y][x] === '1') mask[y * w + ci * (gw + gap) + x] = 1;
       }
     }
   });
+  return { mask, w, h: rows };
+}
+
+/** Kenney Mini Square is a 1px grid at 8px. Threshold so the canvas raster stays crisp. */
+function kenneyMask(text: string): { mask: Uint8Array; w: number; h: number } | null {
+  if (typeof document === 'undefined' || !document.fonts?.check?.('8px "Kenney Mini"')) return null;
+  const fontPx = 8;
+  const measure = document.createElement('canvas').getContext('2d');
+  if (!measure) return null;
+  measure.font = `${fontPx}px "Kenney Mini"`;
+  const tw = Math.max(4, Math.ceil(measure.measureText(text).width) + 4);
+  const th = fontPx + 6;
+  const src = document.createElement('canvas');
+  src.width = tw;
+  src.height = th;
+  const g = src.getContext('2d');
+  if (!g) return null;
+  g.font = `${fontPx}px "Kenney Mini"`;
+  g.textBaseline = 'top';
+  g.fillStyle = '#fff';
+  g.fillText(text, 2, 1);
+  const img = g.getImageData(0, 0, tw, th).data;
+  let minX = tw;
+  let minY = th;
+  let maxX = -1;
+  let maxY = -1;
+  const raw = new Uint8Array(tw * th);
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
+      if (img[(y * tw + x) * 4 + 3] > 140) {
+        raw[y * tw + x] = 1;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < minX) return null;
+  const w = maxX - minX + 1;
+  const h = maxY - minY + 1;
+  const mask = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) mask[y * w + x] = raw[(y + minY) * tw + (x + minX)];
+  }
+  return { mask, w, h };
+}
+
+function paintMask(mask: Uint8Array, w: number, h: number, color: string, scale: number): HTMLCanvasElement {
+  const pad = 1;
+  const c = document.createElement('canvas');
+  c.width = (w + pad * 2) * scale;
+  c.height = (h + pad * 2) * scale;
+  const g = c.getContext('2d');
+  if (!g) return c;
+  g.imageSmoothingEnabled = false;
+  const put = (x: number, y: number, fill: string) => {
+    g.fillStyle = fill;
+    g.fillRect(x * scale, y * scale, scale, scale);
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) put(x + pad + dx, y + pad + dy, OUTLINE);
+      }
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (mask[y * w + x]) put(x + pad, y + pad, color);
+    }
+  }
   return c;
+}
+
+/** Integer-scaled pixel text with a 1px dark outline. `scale` is whole font pixels. */
+export function textCanvas(text: string, color: string, scale = 1): HTMLCanvasElement {
+  const shown = text.length ? text : ' ';
+  const glyph = kenneyMask(shown) ?? bitmapMask(shown);
+  return paintMask(glyph.mask, glyph.w, glyph.h, color, Math.max(1, scale | 0));
 }

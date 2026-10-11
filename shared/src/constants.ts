@@ -58,6 +58,7 @@ export const FLAG = {
   Attacking: 4,
   Stunned: 8,
   Moving: 16,
+  Aggro: 32,
 } as const;
 
 export const BTN = { Attack: 1, Skill: 2 } as const;
@@ -216,18 +217,7 @@ export const MONSTERS: readonly MonsterDef[] = [
   { id: 8, name: 'Beast', tile: 124, hp: 24, dmg: 6, speed: 24, aggro: 1200, range: 150, cd: 14 },
 ];
 
-const SOLID_IDS = [
-  2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 27, 28, 29, 30, 31, 32, 33, 36,
-  37, 38, 39, 40, 42, 43, 44, 45, 46, 47, 50, 51, 52, 53, 65, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,
-  90, 91, 92, 93, 94, 95,
-];
-
-const SOLID = new Uint8Array(132);
-for (const id of SOLID_IDS) SOLID[id] = 1;
-
-export function tileIsSolid(id: number): boolean {
-  return id >= 0 && id < SOLID.length && SOLID[id] === 1;
-}
+export { tileIsSolid } from './tiles.ts';
 
 /** round(speed / sqrt(2)) in integer arithmetic. */
 export function diagSpeed(speed: number): number {
