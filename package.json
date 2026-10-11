@@ -1,0 +1,26 @@
+{
+  "name": "tiny-realms",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client",
+    "bots"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev -w @tiny-realms/server\" \"npm run dev -w @tiny-realms/client\"",
+    "dev:server": "npm run dev -w @tiny-realms/server",
+    "dev:client": "npm run dev -w @tiny-realms/client",
+    "build": "npm run build -w @tiny-realms/client",
+    "typecheck": "npm run typecheck -w @tiny-realms/shared && npm run typecheck -w @tiny-realms/server && npm run typecheck -w @tiny-realms/client && npm run typecheck -w @tiny-realms/bots",
+    "selftest": "node --import tsx scripts/selftest.ts",
+    "bots": "node --import tsx bots/src/main.ts",
+    "start": "node --import tsx server/src/index.ts"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.6.3"
+  }
+}

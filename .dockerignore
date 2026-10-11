@@ -1,0 +1,7 @@
+node_modules
+client/dist
+data
+.git
+*.zip
+playwright-report
+test-results
